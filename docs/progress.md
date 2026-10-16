@@ -39,7 +39,7 @@ Tested · Verified on reference browser · Blocked · Deferred.
 |---|---|---|---|---|
 | Windows 11 x64 (MSVC) | ✅ | ✅ 165/165 | ✅ | Ryzen 5 5600G, Radeon iGPU |
 | Linux x64 | ✅ CI | ✅ CI | Unverified | CI (ubuntu-latest) green for Phases 1–3; no display in CI |
-| macOS | ✅ CI | Pending re-run | Unverified | Style golden fixed in `ed08a83` (passed in run 38863957147); layout text goldens failed there because macOS's Times New Roman has different vertical metrics, now skipped by a metrics check |
+| macOS | ✅ CI | Pending re-run | Unverified | Style golden fixed in `ed08a83`. Layout text goldens relied on the platform default font (Times on macOS); they now pin Times New Roman and skip if its metrics differ from the reference machine |
 
 ## Known limitations
 
