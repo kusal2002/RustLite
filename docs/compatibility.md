@@ -133,6 +133,17 @@ grayscale glyph rasterization without hinting by RustLite's own on-demand
 rasterizer ([ADR-0003](../research/decisions/ADR-0003-own-glyph-rasterizer.md);
 text looks softer than Chromium's). No `@font-face`, no color emoji tables.
 
+### Browser UI (SHELL-003, FIND-001)
+
+Tabs (Ctrl/Cmd+T, Ctrl/Cmd+W, Ctrl+Tab, Ctrl+Shift+Tab, Ctrl+PageUp/Down,
+Ctrl/Cmd+1–9, middle-click to close), links in new background tabs
+(Ctrl/Cmd+click, middle-click), clipboard copy/cut/paste in the address and
+find fields, find in page (Ctrl/Cmd+F, Enter/F3/Ctrl+G next,
+Shift+Enter/Shift+F3/Ctrl+Shift+G previous, Esc closes). Find matching is
+simple per-character lowercasing (no Unicode case folding, diacritic or
+whitespace normalization) and does not search across blocks, form-control
+values or alt text. No text selection in page content yet.
+
 ### Networking (NET-001)
 
 HTTP/1.1 and HTTPS (TLS 1.2/1.3 via rustls, OS trust store), gzip, redirects

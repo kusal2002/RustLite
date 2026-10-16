@@ -16,11 +16,11 @@ use crate::{InlineContent, InlineItem, LayoutContext, LineBox, RectF, TextFragme
 
 /// Font and vertical metrics for one style, in px.
 #[derive(Debug, Clone)]
-struct StyleFont {
-    font: Option<FontId>,
-    size: f32,
-    weight: u16,
-    italic: bool,
+pub(crate) struct StyleFont {
+    pub(crate) font: Option<FontId>,
+    pub(crate) size: f32,
+    pub(crate) weight: u16,
+    pub(crate) italic: bool,
     ascent: f32,
     descent: f32,
     line_height: f32,
@@ -51,7 +51,7 @@ pub(crate) fn families(style: &ComputedStyle) -> Vec<Family<'_>> {
         .collect()
 }
 
-fn style_font(style: &ComputedStyle, fonts: &mut FontContext) -> StyleFont {
+pub(crate) fn style_font(style: &ComputedStyle, fonts: &mut FontContext) -> StyleFont {
     let italic = style.font_style != FontStyle::Normal;
     let font = fonts.select(&families(style), style.font_weight, italic);
     let size = style.font_size;
@@ -249,7 +249,7 @@ struct LineBuilder<'a> {
 impl LineBuilder<'_> {
     /// Appends `width` of content from `item` at the pen, merging into the
     /// previous fragment when it belongs to the same item.
-    fn place(&mut self, item: usize, width: f32, runs: Vec<(f32, GlyphRun)>) {
+    fn place(&mut self, item: usize, width: f32, runs: Vec<(f32, GlyphRun)>, text: &str) {
         let x = self.x;
         match self.current.last_mut() {
             Some(f) if f.item == item && (f.rect.right() - x).abs() < 0.001 => {
@@ -257,12 +257,14 @@ impl LineBuilder<'_> {
                 f.runs
                     .extend(runs.into_iter().map(|(dx, r)| (x - base + dx, r)));
                 f.rect.width += width;
+                f.text.push_str(text);
             }
             _ => self.current.push(TextFragment {
                 item,
                 rect: RectF::new(x, 0.0, width, 0.0),
                 baseline: 0.0,
                 runs,
+                text: text.to_owned(),
             }),
         }
         self.x += width;
@@ -357,7 +359,7 @@ pub(crate) fn layout_inline(
             Atom::Break { item } => {
                 // The <br> is a zero-width inline box at the end of its line;
                 // its font contributes to the line height, as in browsers.
-                b.place(*item, 0.0, Vec::new());
+                b.place(*item, 0.0, Vec::new(), "");
                 b.finish_line();
                 pending_space = None;
                 i += 1;
@@ -377,9 +379,9 @@ pub(crate) fn layout_inline(
                 if has_content && b.x + space.map_or(0.0, |s| s.1) + w > width + 0.01 {
                     b.finish_line();
                 } else if let Some((sp, sw)) = space {
-                    b.place(sp, sw, Vec::new());
+                    b.place(sp, sw, Vec::new(), " ");
                 }
-                b.place(*item, w, Vec::new());
+                b.place(*item, w, Vec::new(), "");
                 i += 1;
             }
             Atom::Word { .. } => {
@@ -388,7 +390,7 @@ pub(crate) fn layout_inline(
                 let mut group = Vec::new();
                 while let Some(Atom::Word { item, text }) = atoms.get(i) {
                     let (runs, w) = shape(text, &fonts[*item], ctx.fonts);
-                    group.push((*item, runs, w));
+                    group.push((*item, runs, w, text));
                     i += 1;
                 }
                 let group_width: f32 = group.iter().map(|g| g.2).sum();
@@ -405,10 +407,10 @@ pub(crate) fn layout_inline(
                 if has_content && b.x + space_w + group_width > width + 0.01 {
                     b.finish_line();
                 } else if let Some((item, w)) = space {
-                    b.place(item, w, Vec::new());
+                    b.place(item, w, Vec::new(), " ");
                 }
-                for (item, runs, w) in group {
-                    b.place(item, w, runs);
+                for (item, runs, w, text) in group {
+                    b.place(item, w, runs, text);
                 }
             }
         }

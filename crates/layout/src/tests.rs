@@ -349,3 +349,38 @@ fn min_and_max_sizes_clamp_blocks() {
     assert_eq!(l.rect("c").height, 40.0);
     assert_eq!(l.rect("d").height, 25.0);
 }
+
+#[test]
+fn find_text_matches_across_elements_and_wraps() {
+    let Some(mut f) = fonts() else { return };
+    let l = lay_out_with(
+        &format!(
+            "{RESET}<p id=a style='margin: 0'>Alpha be<b>ta</b> gamma</p>\
+             <p id=b style='width: 60px; margin: 0'>xxxx needle yyyy needle</p>"
+        ),
+        &mut f,
+    );
+    let m = find_text(&l.tree, &mut f, "BETA");
+    assert_eq!(m.len(), 1, "case-insensitive, spans <b>");
+    assert_eq!(m[0].len(), 2, "one rect per fragment");
+    let a = l.rect("a");
+    assert!(m[0][0].x > a.x && m[0][0].y == a.y);
+    assert!(
+        (m[0][0].right() - m[0][1].x).abs() < 0.5,
+        "rects are adjacent"
+    );
+
+    let needles = find_text(&l.tree, &mut f, "needle");
+    assert_eq!(needles.len(), 2);
+    assert!(
+        needles[1][0].y > needles[0][0].y,
+        "second match is on a later line"
+    );
+    // A soft wrap reads as a space.
+    assert_eq!(find_text(&l.tree, &mut f, "xxxx needle").len(), 1);
+    assert!(find_text(&l.tree, &mut f, "").is_empty());
+    assert!(
+        find_text(&l.tree, &mut f, "gammaxxxx").is_empty(),
+        "no match across blocks"
+    );
+}

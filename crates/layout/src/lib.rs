@@ -9,6 +9,7 @@
 
 mod block;
 mod build;
+mod find;
 mod geometry;
 mod inline;
 mod paint;
@@ -22,6 +23,7 @@ use rustlite_fonts::FontContext;
 use rustlite_paint::{GlyphRun, ImageData};
 use rustlite_style::{ComputedStyle, ComputedStyles};
 
+pub use find::{FindMatch, find_text};
 pub use geometry::{Edges, RectF};
 pub use paint::{canvas_background, paint};
 
@@ -129,6 +131,9 @@ pub struct TextFragment {
     pub baseline: f32,
     /// Glyph runs with their x offset from `rect.x`.
     pub runs: Vec<(f32, GlyphRun)>,
+    /// The text the runs show (collapsed spaces included), for find-in-page.
+    /// Empty for atomic inlines and line breaks.
+    pub text: String,
 }
 
 /// The laid-out document.

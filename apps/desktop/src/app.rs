@@ -240,10 +240,10 @@ pub fn render_headless(options: &Options, path: &Path) -> Result<HeadlessReport,
     frame::compose(
         &mut list,
         size,
-        &toolbar,
-        &view,
+        toolbar.bottom(),
         tab.page_mut(),
         options.debug_overlay,
+        |out, _, _| toolbar.paint(&view, out),
     );
     let mut fb = Framebuffer::new(size.width, size.height)?;
     rasterize(

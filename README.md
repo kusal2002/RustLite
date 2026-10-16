@@ -3,8 +3,9 @@
 An original, cross-platform web browser engine written in Rust: HTML, DOM, CSS,
 layout, paint and rendering are RustLite code, not a wrapped engine.
 
-**Status:** Phase 6. RustLite browses: it loads pages over HTTP(S) with
-certificate validation, follows links, keeps history, and renders with its own
+**Status:** Phase 7. RustLite browses: it loads pages over HTTP(S) with
+certificate validation, follows links, keeps history, has tabs and
+find-in-page, and renders with its own
 HTML parser, CSS engine, block/inline layout, glyph rasterizer and CPU renderer
 (each verified against Chromium on golden fixtures). Normal flow only; no
 floats, flex/grid or JavaScript yet, and no sandbox: see
@@ -35,10 +36,13 @@ Open a page: `cargo run --release -- https://example.com/` or a local file:
 `cargo run --release -- tests/pages/sample.html`. Without an argument the
 address bar is focused; type a URL or path and press Enter.
 
-Shortcuts: Ctrl+L / Alt+D / F6 address bar · Alt+←/→ back/forward ·
-F5 / Ctrl+R reload · Esc stop · Ctrl+Q / Ctrl+W quit (Cmd on macOS) ·
-F12 debug overlay · wheel, ↑/↓, Page Up/Down, Space/Shift+Space, Home/End scroll.
-Click links to follow them.
+Shortcuts (Cmd instead of Ctrl on macOS): Ctrl+L / Alt+D / F6 address bar ·
+Alt+←/→ back/forward · F5 / Ctrl+R reload · Esc stop · Ctrl+T new tab ·
+Ctrl+W close tab · Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+1–9 switch tabs ·
+Ctrl+F find (Enter / Shift+Enter, F3 next/previous) · Ctrl+C/X/V in text
+fields · Ctrl+Q quit · F12 debug overlay · wheel, ↑/↓, Page Up/Down,
+Space/Shift+Space, Home/End scroll. Click links to follow them;
+Ctrl+click or middle-click opens them in a background tab.
 Logging: `RUST_LOG=debug cargo run`.
 
 ## Checks

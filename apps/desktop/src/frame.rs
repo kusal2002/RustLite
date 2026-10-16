@@ -5,40 +5,45 @@
 use rustlite_browser_core::Page;
 use rustlite_paint::{Color, DisplayItem, DisplayList, Rect, Size};
 
-use crate::toolbar::{ToolbarLayout, ToolbarView};
+use crate::toolbar::ToolbarLayout;
 
 /// Window background behind everything (visible only if the page does not cover it).
 pub const WINDOW_BACKGROUND: Color = Color::rgb(0xFF, 0xFF, 0xFF);
 const DEBUG_OUTLINE: Color = Color::rgba(0xFF, 0x00, 0xFF, 0xA0);
 
-/// Size of the page viewport for a given window size and toolbar.
+/// Size of the page viewport for a given window size and toolbar (the
+/// lowest piece of chrome; content starts below it).
 pub fn content_size(window: Size, toolbar: &ToolbarLayout) -> Size {
-    Size::new(window.width, window.height.saturating_sub(toolbar.height()))
+    let r = content_rect(window, toolbar.bottom());
+    Size::new(r.width, r.height)
 }
 
-/// Builds the full frame for `window` into `out` (cleared first, allocation reused).
+/// The page area: everything below `top`.
+pub fn content_rect(window: Size, top: u32) -> Rect {
+    let top = top.min(window.height);
+    Rect::new(0, top as i32, window.width, window.height - top)
+}
+
+/// Builds the full frame for `window` into `out` (cleared first, allocation
+/// reused): the page, then whatever `chrome` paints over it (toolbar, tab
+/// strip, find highlights and bar). `chrome` gets the content rectangle.
 pub fn compose(
     out: &mut DisplayList,
     window: Size,
-    toolbar: &ToolbarLayout,
-    view: &ToolbarView,
+    content_top: u32,
     page: &mut Page,
     debug_overlay: bool,
+    chrome: impl FnOnce(&mut DisplayList, &mut Page, Rect),
 ) {
     out.clear();
-    let content = Rect::new(
-        0,
-        toolbar.height() as i32,
-        window.width,
-        window.height.saturating_sub(toolbar.height()),
-    );
+    let content = content_rect(window, content_top);
 
     page.set_viewport(Size::new(content.width, content.height));
     out.push_clip(content);
     out.extend_translated(page.display_list(), content.x, content.y);
     out.pop_clip();
 
-    toolbar.paint(view, out);
+    chrome(out, page, content);
 
     if debug_overlay {
         let painted: Vec<Rect> = out
@@ -60,6 +65,7 @@ pub fn compose(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::toolbar::ToolbarView;
     use rustlite_renderer::{Framebuffer, rasterize};
 
     fn render(window: Size, debug_overlay: bool) -> (Framebuffer, ToolbarLayout, Page) {
@@ -69,10 +75,10 @@ mod tests {
         compose(
             &mut list,
             window,
-            &toolbar,
-            &ToolbarView::default(),
+            toolbar.bottom(),
             &mut page,
             debug_overlay,
+            |out, _, _| toolbar.paint(&ToolbarView::default(), out),
         );
         let mut fb = Framebuffer::new(window.width, window.height).unwrap();
         let stats = rasterize(

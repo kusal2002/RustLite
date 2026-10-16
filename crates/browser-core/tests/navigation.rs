@@ -7,7 +7,7 @@ use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rustlite_browser_core::{Initiator, NavState, Page, Tab};
+use rustlite_browser_core::{Initiator, NavState, Page, Tab, load_id_space};
 use rustlite_fonts::FontContext;
 use rustlite_net::{FetchConfig, LoadResult, Loader, Url};
 use rustlite_paint::Size;
@@ -259,4 +259,32 @@ fn clicking_a_link_navigates() {
     assert!(t.back());
     pump(&mut t, &rx, 0);
     assert_eq!(t.page().title().as_deref(), Some("Page"));
+}
+
+#[test]
+fn tabs_sharing_a_loader_get_their_own_results() {
+    let base = server();
+    let (mut a, rx) = tab();
+    let loader = a.loader().cloned();
+    let page = Page::with_fonts(Size::new(800, 600), FontContext::new());
+    let mut b = Tab::with_id_space(page, loader, 7);
+    assert_eq!((a.id_space(), b.id_space()), (0, 7));
+    a.navigate(&format!("{base}/fast")).unwrap();
+    b.navigate(&format!("{base}/page")).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline
+        && (a.state() != NavState::Idle
+            || b.state() != NavState::Idle
+            || b.pending_subresources() > 0)
+    {
+        if let Ok(r) = rx.recv_timeout(Duration::from_millis(50)) {
+            match load_id_space(r.id) {
+                0 => a.on_load_result(r),
+                7 => b.on_load_result(r),
+                other => panic!("unknown id space {other}"),
+            };
+        }
+    }
+    assert_eq!(a.page().title().as_deref(), Some("Fast"));
+    assert_eq!(b.page().title().as_deref(), Some("Page"));
 }

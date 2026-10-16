@@ -42,6 +42,7 @@ Performance targets are **hypotheses** until measured on a defined setup.
 | 2026-10-16 | Release binary size with `image` (png/jpeg/gif) | bytes | 2,661,376 (2.5 MiB) | file size |
 | 2026-10-16 | Release binary size with networking (ureq, rustls/ring, platform verifier, url, encoding_rs) | bytes | 4,814,336 (4.6 MiB) | file size |
 | 2026-10-16 | Window showing https://example.com/, 5 s after launch | working set / private bytes / threads | 28.0 MB / 12.0 MB / 15 | PowerShell `Get-Process` |
+| 2026-10-16 | Three tabs (two with tests/pages/sample.html, one blank), find bar used | working set | 29.1 MB | PowerShell `Get-Process`; tabs share one font context |
 | 2026-10-16 | Style computation, same page (300,005 elements, 160 rules incl. UA), 800×600 | style time (3 runs) | 71.4 / 88.1 / 71.7 ms; 299,987 elements served by style sharing | `rustlite --dump-style` `style_ms` log field, release build. Best case for sharing: the page repeats one structure 20,000 times |
 
 Single runs; no variance analysis yet. Criterion benchmarks are not set up yet; parse timings come from the

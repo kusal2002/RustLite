@@ -10,7 +10,9 @@
 pub mod images;
 mod tab;
 
-pub use tab::{Initiator, NavState, NavigationError, Tab, error_page_html, parse_user_input};
+pub use tab::{
+    Initiator, NavState, NavigationError, Tab, error_page_html, load_id_space, parse_user_input,
+};
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -383,6 +385,20 @@ impl Page {
         base.join(&href).ok()
     }
 
+    /// Text matches for find-in-page, in document CSS px, document order.
+    pub fn find(&mut self, query: &str) -> Vec<rustlite_layout::FindMatch> {
+        if query.is_empty() || self.layout().is_none() {
+            return Vec::new();
+        }
+        let Content::Html(doc) = &self.content else {
+            return Vec::new();
+        };
+        let (Some(tree), Some(fonts)) = (&doc.layout, &mut self.fonts) else {
+            return Vec::new();
+        };
+        rustlite_layout::find_text(tree, fonts, query)
+    }
+
     /// The document title per HTML §4.2.2: the first `<title>` element's text
     /// with ASCII whitespace stripped and collapsed. `None` if there is none.
     pub fn title(&self) -> Option<String> {
@@ -475,6 +491,21 @@ impl Page {
         match &mut self.fonts {
             Some(f) => f,
             None => &mut self.no_glyphs,
+        }
+    }
+
+    /// Removes the font context so another page can use it; see
+    /// [`Page::set_fonts`]. Tabs in one window pass a single context around
+    /// instead of each loading the system fonts and keeping its own caches.
+    pub fn take_fonts(&mut self) -> Option<FontContext> {
+        self.fonts.take()
+    }
+
+    /// Installs a font context. Font ids are per context: a page that
+    /// already had a (different) context is laid out again.
+    pub fn set_fonts(&mut self, fonts: FontContext) {
+        if self.fonts.replace(fonts).is_some() {
+            self.invalidate_layout();
         }
     }
 

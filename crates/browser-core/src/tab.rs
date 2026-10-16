@@ -86,6 +86,19 @@ pub struct Tab {
     index: Option<usize>,
 }
 
+/// The tab id space a load id belongs to (see [`Tab::with_id_space`]).
+pub fn load_id_space(id: u64) -> u32 {
+    (id >> 32) as u32
+}
+
+impl Drop for Tab {
+    /// A closed tab's loads are cancelled so they stop using the shared loader.
+    fn drop(&mut self) {
+        self.stop();
+        self.subresource_cancel.cancel();
+    }
+}
+
 /// Interprets address-bar input: full URLs as typed, filesystem paths as
 /// `file:` URLs, `localhost[:port]` as `http:`, and anything else as an
 /// `https:` host.
@@ -166,16 +179,28 @@ impl Tab {
     /// A tab showing `page`. Without a loader, only `file:` and `about:`
     /// URLs can be opened.
     pub fn new(page: Page, loader: Option<Arc<Loader>>) -> Self {
+        Self::with_id_space(page, loader, 0)
+    }
+
+    /// Like [`Tab::new`], but load ids carry `space` in their high 32 bits so
+    /// several tabs can share one loader: route a [`LoadResult`] to the tab
+    /// whose space is [`load_id_space`]`(result.id)`.
+    pub fn with_id_space(page: Page, loader: Option<Arc<Loader>>, space: u32) -> Self {
         Self {
             page,
             loader,
-            next_id: 1,
+            next_id: (u64::from(space) << 32) | 1,
             pending: None,
             subresources: HashMap::new(),
             subresource_cancel: CancelToken::new(),
             history: Vec::new(),
             index: None,
         }
+    }
+
+    /// The loader this tab fetches with (shared between tabs).
+    pub fn loader(&self) -> Option<&Arc<Loader>> {
+        self.loader.as_ref()
     }
 
     pub fn page(&self) -> &Page {
@@ -211,9 +236,16 @@ impl Tab {
         self.subresources.len()
     }
 
+    /// The id space given to [`Tab::with_id_space`].
+    pub fn id_space(&self) -> u32 {
+        load_id_space(self.next_id)
+    }
+
     fn next_id(&mut self) -> u64 {
         let id = self.next_id;
-        self.next_id += 1;
+        // Stay inside this tab's space (2^32 loads per tab before wrapping).
+        let seq = (id as u32).wrapping_add(1).max(1);
+        self.next_id = (id & !0xFFFF_FFFF) | u64::from(seq);
         id
     }
 

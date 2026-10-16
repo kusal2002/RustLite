@@ -23,6 +23,18 @@ pub enum Command {
     Reload,
     /// Stop the pending navigation.
     Stop,
+    /// Open a blank tab and focus its address bar.
+    NewTab,
+    /// Close the current tab (the window closes with its last tab).
+    CloseTab,
+    NextTab,
+    PreviousTab,
+    /// Switch to the tab at this index; `usize::MAX` means the last tab.
+    SelectTab(usize),
+    /// Open the find bar (or focus it and select its text).
+    Find,
+    FindNext,
+    FindPrevious,
 }
 
 /// The platform's primary shortcut modifier: Cmd on macOS, Ctrl elsewhere.
@@ -37,7 +49,25 @@ fn primary_modifier(mods: ModifiersState) -> bool {
 /// Maps a key press to a command, if it is a known shortcut.
 pub fn shortcut(key: &Key, mods: ModifiersState) -> Option<Command> {
     let extra = mods.shift_key() || mods.alt_key();
+    let ctrl_only = mods == ModifiersState::CONTROL;
     match key {
+        // Ctrl+Tab is the tab-switching key on every platform, macOS included.
+        Key::Named(NamedKey::Tab) if ctrl_only => Some(Command::NextTab),
+        Key::Named(NamedKey::Tab) if mods == ModifiersState::CONTROL | ModifiersState::SHIFT => {
+            Some(Command::PreviousTab)
+        }
+        Key::Named(NamedKey::PageDown) if ctrl_only => Some(Command::NextTab),
+        Key::Named(NamedKey::PageUp) if ctrl_only => Some(Command::PreviousTab),
+        Key::Named(NamedKey::F3) if mods.is_empty() => Some(Command::FindNext),
+        Key::Named(NamedKey::F3) if mods == ModifiersState::SHIFT => Some(Command::FindPrevious),
+        Key::Character(c)
+            if primary_modifier(mods)
+                && mods.shift_key()
+                && !mods.alt_key()
+                && c.eq_ignore_ascii_case("g") =>
+        {
+            Some(Command::FindPrevious)
+        }
         Key::Named(NamedKey::F12) if mods.is_empty() => Some(Command::ToggleDebugOverlay),
         Key::Named(NamedKey::ArrowDown) if mods.is_empty() => Some(Command::ScrollLines(1)),
         Key::Named(NamedKey::ArrowUp) if mods.is_empty() => Some(Command::ScrollLines(-1)),
@@ -59,9 +89,17 @@ pub fn shortcut(key: &Key, mods: ModifiersState) -> Option<Command> {
         }
         Key::Character(c) if primary_modifier(mods) && !extra => {
             match c.to_ascii_lowercase().as_str() {
-                "q" | "w" => Some(Command::Quit),
+                "q" => Some(Command::Quit),
+                "w" => Some(Command::CloseTab),
+                "t" => Some(Command::NewTab),
+                "f" => Some(Command::Find),
+                "g" => Some(Command::FindNext),
                 "l" => Some(Command::FocusAddress),
                 "r" => Some(Command::Reload),
+                "9" => Some(Command::SelectTab(usize::MAX)),
+                d if d.len() == 1 && ("1"..="8").contains(&d) => {
+                    Some(Command::SelectTab(usize::from(d.as_bytes()[0] - b'1')))
+                }
                 "[" if cfg!(target_os = "macos") => Some(Command::Back),
                 "]" if cfg!(target_os = "macos") => Some(Command::Forward),
                 _ => None,
@@ -91,8 +129,47 @@ mod tests {
         );
         assert_eq!(
             shortcut(&Key::Character("W".into()), primary()),
-            Some(Command::Quit)
+            Some(Command::CloseTab)
         );
+    }
+
+    #[test]
+    fn tab_and_find_shortcuts() {
+        let ctrl = ModifiersState::CONTROL;
+        let key = |c: &str| Key::Character(c.into());
+        assert_eq!(shortcut(&key("t"), primary()), Some(Command::NewTab));
+        assert_eq!(shortcut(&key("1"), primary()), Some(Command::SelectTab(0)));
+        assert_eq!(shortcut(&key("8"), primary()), Some(Command::SelectTab(7)));
+        assert_eq!(
+            shortcut(&key("9"), primary()),
+            Some(Command::SelectTab(usize::MAX))
+        );
+        assert_eq!(
+            shortcut(&Key::Named(NamedKey::Tab), ctrl),
+            Some(Command::NextTab)
+        );
+        assert_eq!(
+            shortcut(&Key::Named(NamedKey::Tab), ctrl | ModifiersState::SHIFT),
+            Some(Command::PreviousTab)
+        );
+        assert_eq!(
+            shortcut(&Key::Named(NamedKey::PageDown), ctrl),
+            Some(Command::NextTab)
+        );
+        assert_eq!(
+            shortcut(&Key::Named(NamedKey::PageDown), ModifiersState::empty()),
+            Some(Command::ScrollPages(1))
+        );
+        assert_eq!(shortcut(&key("f"), primary()), Some(Command::Find));
+        assert_eq!(
+            shortcut(&Key::Named(NamedKey::F3), ModifiersState::SHIFT),
+            Some(Command::FindPrevious)
+        );
+        assert_eq!(
+            shortcut(&key("G"), primary() | ModifiersState::SHIFT),
+            Some(Command::FindPrevious)
+        );
+        assert_eq!(shortcut(&key("g"), primary()), Some(Command::FindNext));
     }
 
     #[test]

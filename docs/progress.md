@@ -36,6 +36,8 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | NET-001 | HTTP(S) fetch: TLS (OS trust store), manual redirects with scheme checks, limits, timeouts, cancellation, charset decoding, background loader | Tested | `net` unit + local-server integration tests; badssl.com manual checks ([spec](../research/specifications/NET-001.md)) |
 | NAV-001 | Tab navigation: stale-result protection, history, error pages, URL policy, linked stylesheets and images over HTTP | Tested | `browser-core` navigation tests against a local server |
 | SHELL-002 | Address bar editing, link clicks, back/forward/reload/stop, loading bar | Tested | `address_bar`, `commands`, `toolbar` tests; manual windowed use |
+| SHELL-003 | Multiple tabs (tab strip, per-tab load ids on one shared loader, one shared font context), links in new tabs, clipboard in text fields | Tested | `tabstrip`, `commands`, `address_bar` tests; shared-loader routing test; scripted windowed run |
+| FIND-001 | Find in page: case-insensitive matches across inline elements and soft wraps, highlights, next/previous, scroll to match | Tested | layout `find_text` test; `findbar` tests; scripted windowed run |
 | CSS-002 | `font` shorthand, `min-/max-width/height`, `light-dark()` | Verified on reference browser (fixture set) | `font-shorthand` style and `min-max-sizes` layout fixtures match Chromium 152 |
 | JS-001 | JS runtime | Deferred (Phase 9) | — |
 
@@ -43,7 +45,7 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 | Platform | Build | Tests | Window | Notes |
 |---|---|---|---|---|
-| Windows 11 x64 (MSVC) | ✅ | ✅ 226/226 | ✅ | Ryzen 5 5600G, Radeon iGPU |
+| Windows 11 x64 (MSVC) | ✅ | ✅ 239/239 | ✅ | Ryzen 5 5600G, Radeon iGPU |
 | Linux x64 | ✅ CI | ✅ CI (run 38864693788) | Unverified | No display in CI; text layout goldens skip (no Times New Roman) |
 | macOS | ✅ CI | ✅ CI (run 38864693788) | Unverified | Layout text goldens pin Times New Roman and skip if its metrics differ from the reference machine |
 
@@ -169,3 +171,27 @@ Tested · Verified on reference browser · Blocked · Deferred.
   private; binary 4.6 MiB (TLS and encodings). See [performance.md](performance.md).
 - **Next:** Phase 7 completion (tabs, history UI) or Phase 8 (benchmarks,
   incremental invalidation); process isolation design before JavaScript.
+
+### 2026-10-16 — Phase 7: tabs, clipboard, find in page
+
+- **What:** a tab strip (new, close, switch, middle-click close, `+` button,
+  per-tab loading indicator); tabs share one loader, with each tab's load ids
+  in its own 32-bit space so results route to the right tab and closed tabs'
+  loads are cancelled; the window's single font context moves to the active
+  tab instead of each tab loading system fonts; Ctrl/Cmd+click and
+  middle-click open links in background tabs; copy, cut and paste in the
+  address bar (arboard); find in page with a floating bar, highlights, match
+  count, next/previous and scrolling to the current match.
+- **Layout change:** text fragments now keep their text, which find uses;
+  matches span inline elements and soft line breaks but not blocks.
+- **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 239 passed
+  · release build ✅ · scripted windowed run (SendKeys + screenshots): find
+  highlights align with text, Enter steps to 3/4, Ctrl+T/W/Tab, Ctrl+L/C,
+  Ctrl+V into a new tab, Ctrl+Q all behave.
+- **Not verified:** Ctrl+click and middle-click on links were not exercised
+  in the scripted run (no mouse automation); clipboard on Linux/macOS is
+  unit-tested only through the editing model.
+- **Measurements:** three tabs, two showing the sample page: 29.1 MB working
+  set (one tab: ~24–28 MB); binary 4.6 MiB.
+- **Next:** Phase 8 (benchmarks, incremental invalidation, HTTP cache) or a
+  history list; process isolation design before JavaScript.

@@ -131,34 +131,68 @@ pub struct ToolbarLayout {
     scale: f32,
 }
 
-fn px(logical: f64, scale: f64) -> u32 {
+pub(crate) fn px(logical: f64, scale: f64) -> u32 {
     // Window sizes are bounded far below u32::MAX, so the cast cannot truncate.
     (logical * scale).round().max(1.0) as u32
 }
 
+/// A usable scale factor (1.0 for nonsense values).
+pub(crate) fn sane_scale(scale_factor: f64) -> f64 {
+    if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    }
+}
+
+/// Draws `text` with its baseline vertically centered in `rect`.
+pub(crate) fn draw_text(
+    out: &mut DisplayList,
+    scale: f32,
+    rect: Rect,
+    x: f32,
+    text: &UiText,
+    color: Color,
+) {
+    let line = (text.ascent + text.descent) * scale;
+    let baseline = rect.y as f32 + (rect.height as f32 - line) / 2.0 + text.ascent * scale;
+    for (dx, run) in &text.runs {
+        out.push(DisplayItem::Text {
+            x: x + dx * scale,
+            y: baseline.round(),
+            scale,
+            color,
+            run: run.clone(),
+        });
+    }
+}
+
 impl ToolbarLayout {
+    /// A toolbar at the top of the window.
     pub fn new(window_width: u32, scale_factor: f64) -> Self {
-        let scale = if scale_factor.is_finite() && scale_factor > 0.0 {
-            scale_factor
-        } else {
-            1.0
-        };
+        Self::at(0, window_width, scale_factor)
+    }
+
+    /// A toolbar whose top edge is at `top` (device px), below other chrome.
+    pub fn at(top: u32, window_width: u32, scale_factor: f64) -> Self {
+        let scale = sane_scale(scale_factor);
         let height = px(HEIGHT, scale);
         let pad = px(PADDING, scale);
         let control = height.saturating_sub(2 * pad);
+        let y = (top + pad) as i32;
 
         let mut x = pad;
         let buttons = ToolbarButton::ALL.map(|button| {
-            let rect = Rect::new(x as i32, pad as i32, control, control);
+            let rect = Rect::new(x as i32, y, control, control);
             x += control + pad;
             (button, rect)
         });
 
         let address_width = window_width.saturating_sub(x + pad);
         Self {
-            bounds: Rect::new(0, 0, window_width, height),
+            bounds: Rect::new(0, top as i32, window_width, height),
             buttons,
-            address_field: Rect::new(x as i32, pad as i32, address_width, control),
+            address_field: Rect::new(x as i32, y, address_width, control),
             separator_width: px(1.0, scale),
             scale: scale as f32,
         }
@@ -166,6 +200,11 @@ impl ToolbarLayout {
 
     pub fn height(&self) -> u32 {
         self.bounds.height
+    }
+
+    /// The first device-px row below the toolbar (where content starts).
+    pub fn bottom(&self) -> u32 {
+        self.bounds.y as u32 + self.bounds.height
     }
 
     pub fn hit_test(&self, point: Point) -> Option<ToolbarHit> {
@@ -186,27 +225,16 @@ impl ToolbarLayout {
         8.0 * self.scale
     }
 
-    /// Draws `text` with its baseline vertically centered in `rect`.
     fn text(&self, out: &mut DisplayList, rect: Rect, x: f32, text: &UiText, color: Color) {
-        let s = self.scale;
-        let line = (text.ascent + text.descent) * s;
-        let baseline = rect.y as f32 + (rect.height as f32 - line) / 2.0 + text.ascent * s;
-        for (dx, run) in &text.runs {
-            out.push(DisplayItem::Text {
-                x: x + dx * s,
-                y: baseline.round(),
-                scale: s,
-                color,
-                run: run.clone(),
-            });
-        }
+        draw_text(out, self.scale, rect, x, text, color);
     }
 
     pub fn paint(&self, view: &ToolbarView, out: &mut DisplayList) {
         out.fill_rect(self.bounds, BACKGROUND);
         let sep = self.separator_width.min(self.bounds.height);
+        let bottom = self.bottom() as i32;
         out.fill_rect(
-            Rect::new(0, (self.bounds.height - sep) as i32, self.bounds.width, sep),
+            Rect::new(0, bottom - sep as i32, self.bounds.width, sep),
             SEPARATOR,
         );
         for (i, (button, rect)) in self.buttons.into_iter().enumerate() {
@@ -280,7 +308,7 @@ impl ToolbarLayout {
         if view.loading {
             let h = (2.0 * self.scale).round().max(1.0) as u32;
             out.fill_rect(
-                Rect::new(0, (self.bounds.height - h) as i32, self.bounds.width, h),
+                Rect::new(0, self.bottom() as i32 - h as i32, self.bounds.width, h),
                 LOADING_BAR,
             );
         }
@@ -313,6 +341,20 @@ mod tests {
                 assert_eq!(a.intersect(*b), None);
             }
         }
+    }
+
+    #[test]
+    fn offset_toolbar_moves_every_control() {
+        let top = ToolbarLayout::new(800, 1.0);
+        let below = ToolbarLayout::at(34, 800, 1.0);
+        assert_eq!(below.bottom(), 34 + top.height());
+        assert_eq!(below.address_field.y, top.address_field.y + 34);
+        let (_, back) = below.buttons[0];
+        assert_eq!(
+            below.hit_test(Point::new(back.x + 1, back.y + 1)),
+            Some(ToolbarHit::Button(ToolbarButton::Back))
+        );
+        assert_eq!(below.hit_test(Point::new(back.x + 1, 2)), None);
     }
 
     #[test]

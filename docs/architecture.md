@@ -92,6 +92,7 @@ windows.
 | `ttf-parser 0.25` | Font tables, metrics, cmap | All | MIT/Apache-2.0 | Shared by fontdb and rustybuzz. |
 | `image 0.25` (png, jpeg, gif only) | Image decoding | All | MIT/Apache-2.0 | ~0.45 MiB of binary; limits on dimensions and allocation. |
 | `ureq 3.4` (rustls, platform-verifier, gzip) | HTTP/1.1 client | All (ring needs a C compiler) | MIT/Apache-2.0 | Synchronous; run on loader threads. Brings rustls + ring + rustls-platform-verifier |
+| `arboard 3.7` (no default features) | System clipboard text | All (X11 on Linux; no Wayland data-control without the feature) | MIT/Apache-2.0 | Desktop app only; opened lazily on first copy/paste |
 | `url 2.5` | WHATWG URL parsing and resolution | All | MIT/Apache-2.0 | |
 | `encoding_rs 0.8` | WHATWG Encoding Standard decoders | All | MIT/Apache-2.0 + WHATWG BSD-3 data | Encoding tables add ~1 MiB of binary |
 

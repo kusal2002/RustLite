@@ -11,6 +11,7 @@ name = "rustlite"
 path = "src/main.rs"
 
 [dependencies]
+arboard.workspace = true
 rustlite-browser-core.workspace = true
 rustlite-diagnostics.workspace = true
 rustlite-dom.workspace = true

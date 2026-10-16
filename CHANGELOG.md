@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Added — 2026-10-16 (Phase 7)
+- Tabs: tab strip with close and new-tab buttons, keyboard switching,
+  middle-click close, links in background tabs (Ctrl/Cmd+click,
+  middle-click). Tabs share one loader (`Tab::with_id_space`,
+  `load_id_space`) and one font context (`Page::take_fonts`/`set_fonts`);
+  dropping a tab cancels its loads.
+- Clipboard copy/cut/paste in the address bar (arboard).
+- Find in page: `rustlite_layout::find_text`, `Page::find`, a floating find
+  bar with match count, highlights, next/previous and scroll to match.
+- Layout text fragments keep their text.
+
+### Changed
+- Ctrl/Cmd+W closes the current tab (the window closes with its last tab)
+  instead of quitting.
+
 ### Added — 2026-10-16 (Phase 6)
 - `rustlite-net`: HTTP(S) fetching (ureq + rustls, OS trust store), manual
   redirects with scheme checks, body limits, timeouts, cancellation, charset

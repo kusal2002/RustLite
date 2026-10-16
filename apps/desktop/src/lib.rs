@@ -7,6 +7,8 @@ pub mod address_bar;
 pub mod app;
 pub mod browser_window;
 pub mod commands;
+pub mod findbar;
 pub mod frame;
 pub mod options;
+pub mod tabstrip;
 pub mod toolbar;

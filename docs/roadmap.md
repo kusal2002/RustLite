@@ -12,15 +12,15 @@ acceptance criteria pass; see [progress.md](progress.md) for live status.
 | 4 | Block/inline layout, text measurement, line breaking, scrolling | Simple pages' geometry within tolerance | **Done** (2026-10-16): 9/9 fixtures within 0.1px of Chromium |
 | 5 | Display lists for text/images, clipping, GPU presentation | Renders a simple HTML page without another engine | **Done on CPU** (2026-10-16): text, boxes, images, list markers, border styles, clipping, device scale. GPU presentation deferred (ADR-0001) |
 | 6 | HTTP(S), URL resolution, redirects, errors | Loads local test server + selected pages | **Done** (2026-10-16): local-server tests; example.com; bad certificates refused |
-| 7 | Address bar, navigation, history, loading state, tabs | Navigate and recover from failures | **Mostly done**: address bar, links, history, loading state, error recovery; multiple tabs remain |
+| 7 | Address bar, navigation, history, loading state, tabs | Navigate and recover from failures | **Done** (2026-10-16): address bar, links, history, loading state, error recovery, tabs, clipboard, find in page |
 | 8 | Benchmarks, memory reporting, bounded caches, incremental invalidation | Measured, regression-tested | Planned (frame-time stats exist) |
 | 9 | JS runtime (Boa evaluation), first DOM APIs | Simple interactive pages | Planned |
 | 10 | Advanced CSS, Web APIs, isolation, security | Every claim tested + documented | Planned |
 
 ## Next milestones
 
-**Phase 7 completion:** multiple tabs (tab strip, Ctrl+T/W, per-tab loader
-ids), clipboard paste into the address bar, find-in-page, a history list.
+**Phase 7 follow-ups:** a history list / back-button menu, text selection
+and copy in page content, tab drag-reordering, session restore.
 
 **Phase 8 performance:** criterion benchmarks for parse/style/layout/raster,
 memory reporting per subsystem, an HTTP cache with a byte budget, incremental

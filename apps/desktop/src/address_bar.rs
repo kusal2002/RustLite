@@ -11,6 +11,12 @@ pub enum Edit {
     Submit(String),
     /// Escape: editing abandoned (text reverted).
     Cancel,
+    /// Copy this text to the clipboard (Ctrl/Cmd+C with a selection).
+    Copy(String),
+    /// Cut: this text was removed; put it on the clipboard.
+    Cut(String),
+    /// Paste: the caller reads the clipboard and calls [`AddressBar::insert`].
+    Paste,
     /// Not an editing key; let other shortcuts handle it.
     Ignored,
 }
@@ -170,6 +176,24 @@ impl AddressBar {
                 self.all_selected = false;
                 Edit::Changed
             }
+            Key::Character(c) if primary && c.eq_ignore_ascii_case("c") => {
+                if self.all_selected {
+                    Edit::Copy(self.text.clone())
+                } else {
+                    Edit::Ignored
+                }
+            }
+            Key::Character(c) if primary && c.eq_ignore_ascii_case("x") => {
+                if self.all_selected {
+                    let text = std::mem::take(&mut self.text);
+                    self.cursor = 0;
+                    self.all_selected = false;
+                    Edit::Cut(text)
+                } else {
+                    Edit::Ignored
+                }
+            }
+            Key::Character(c) if primary && c.eq_ignore_ascii_case("v") => Edit::Paste,
             Key::Character(c) if primary && c.eq_ignore_ascii_case("a") => {
                 self.all_selected = !self.text.is_empty();
                 self.cursor = self.text.len();
@@ -285,5 +309,39 @@ mod tests {
             AddressBar::default().key(&q, Some("q"), ModifiersState::empty()),
             Edit::Ignored
         );
+    }
+
+    fn primary() -> ModifiersState {
+        if cfg!(target_os = "macos") {
+            ModifiersState::SUPER
+        } else {
+            ModifiersState::CONTROL
+        }
+    }
+
+    #[test]
+    fn copy_cut_and_paste() {
+        let mut bar = AddressBar::default();
+        bar.show_url("https://a.test/");
+        bar.focus();
+        let key = |c: &str| Key::Character(c.into());
+        assert_eq!(
+            bar.key(&key("c"), None, primary()),
+            Edit::Copy("https://a.test/".into())
+        );
+        assert_eq!(
+            bar.key(&key("x"), None, primary()),
+            Edit::Cut("https://a.test/".into())
+        );
+        assert_eq!(bar.text(), "");
+        // Without a selection there is nothing to copy or cut.
+        bar.insert("abc");
+        assert_eq!(bar.key(&key("c"), None, primary()), Edit::Ignored);
+        assert_eq!(bar.key(&key("x"), None, primary()), Edit::Ignored);
+        assert_eq!(bar.key(&key("v"), None, primary()), Edit::Paste);
+        // Pasted text replaces a selection and loses line breaks.
+        bar.key(&key("a"), None, primary());
+        bar.insert("example.com\n");
+        assert_eq!(bar.text(), "example.com");
     }
 }
