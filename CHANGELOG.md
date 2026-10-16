@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added — 2026-10-16 (Phase 4)
+- `rustlite-fonts`: system font discovery, CSS-style face selection,
+  per-character fallback, rustybuzz shaping, fontdue glyph rasterization with a
+  bounded cache (ADR-0002).
+- `rustlite-layout`: box tree with anonymous blocks, block layout with margin
+  collapsing, inline layout with whitespace collapsing, line breaking, `<br>`,
+  half-leading, text alignment, and painting of backgrounds, borders and text.
+- Text display items and glyph blending in the renderer; device pixel ratio.
+- Desktop: open a local HTML file (`rustlite FILE`), window title from
+  `<title>`, wheel and keyboard scrolling; `--dump-layout`; headless rendering
+  of files.
+- `/layout` oracle page and 9 geometry fixtures matching Chromium 152.
+
+### Fixed
+- Initial computed `border-width` is 0 (border-style `none`), not 3px.
+- macOS CI: style golden adapts the Windows-recorded default font family.
+
 ### Added — 2026-10-16 (Phase 3)
 - `rustlite-css`: CSS Syntax 3 tokenizer, rule and declaration parser with
   error recovery, selector parser (type/universal/id/class/attribute,

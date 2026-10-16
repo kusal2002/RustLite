@@ -51,6 +51,8 @@ pub struct RunReport {
 
 struct App {
     options: Options,
+    /// (url, source) of the file to open in the first window.
+    initial: Option<(String, String)>,
     window: Option<BrowserWindow>,
     final_stats: Option<FrameStats>,
     error: Option<AppError>,
@@ -81,6 +83,7 @@ impl ApplicationHandler for App {
             self.options.size,
             self.options.debug_overlay,
             self.options.exit_after_frames,
+            self.initial.take(),
         ) {
             Ok(window) => self.window = Some(window),
             Err(e) => self.fail(event_loop, e.into()),
@@ -101,11 +104,14 @@ impl ApplicationHandler for App {
 
 /// Opens the browser window and runs until it is closed.
 pub fn run(options: Options) -> Result<RunReport, AppError> {
+    // Read the file before opening a window so a bad path fails fast.
+    let initial = options.open.as_deref().map(read_local_html).transpose()?;
     let event_loop = EventLoop::new()?;
     // Sleep until the OS delivers events; redraws are requested only on change.
     event_loop.set_control_flow(ControlFlow::Wait);
     let mut app = App {
         options,
+        initial,
         window: None,
         final_stats: None,
         error: None,
@@ -136,11 +142,15 @@ pub struct HeadlessReport {
 }
 
 /// Renders one frame at `options.size` (scale factor 1.0) without a window and
-/// writes it to `path` as PNG.
+/// writes it to `path` as PNG. Renders `options.open` if given.
 pub fn render_headless(options: &Options, path: &Path) -> Result<HeadlessReport, AppError> {
     let size = options.size;
     let toolbar = ToolbarLayout::new(size.width, 1.0);
     let mut page = Page::new(frame::content_size(size, &toolbar));
+    if let Some(file) = &options.open {
+        let (url, source) = read_local_html(file)?;
+        page.load_html(url, &source);
+    }
     let mut list = DisplayList::new();
     let chrome = ChromeState {
         debug_overlay: options.debug_overlay,
@@ -150,7 +160,12 @@ pub fn render_headless(options: &Options, path: &Path) -> Result<HeadlessReport,
     let start = Instant::now();
     frame::compose(&mut list, size, &toolbar, &mut page, chrome);
     let mut fb = Framebuffer::new(size.width, size.height)?;
-    rasterize(&mut fb.canvas(), &list, WINDOW_BACKGROUND);
+    rasterize(
+        &mut fb.canvas(),
+        &list,
+        WINDOW_BACKGROUND,
+        page.glyph_rasterizer(),
+    );
     let raster_time = start.elapsed();
 
     let output_error = |source: PngError| AppError::Output {
@@ -205,8 +220,28 @@ pub fn dump_style(path: &Path, viewport: rustlite_paint::Size) -> Result<String,
     ))
 }
 
+/// Loads a local HTML file and returns every element's border box from layout
+/// (the geometry oracle's format), in a `viewport`-sized viewport.
+pub fn dump_layout(path: &Path, viewport: rustlite_paint::Size) -> Result<String, AppError> {
+    let mut page = load_local_file(path, viewport)?;
+    let (dom, tree) = page
+        .layout()
+        .expect("load_html always produces HTML content");
+    Ok(rustlite_layout::dump_geometry(dom, tree))
+}
+
 /// Reads a local HTML file named explicitly on the command line into a page.
 fn load_local_file(path: &Path, viewport: rustlite_paint::Size) -> Result<Page, AppError> {
+    let (url, source) = read_local_html(path)?;
+    let mut page = Page::new(viewport);
+    page.load_html(url, &source);
+    Ok(page)
+}
+
+/// Reads a local HTML file named explicitly by the user. Returns (url, source).
+///
+/// This is not navigation: pages cannot cause local files to be read.
+fn read_local_html(path: &Path) -> Result<(String, String), AppError> {
     let display = path.display().to_string();
     let input_error = |source| AppError::Input {
         path: display.clone(),
@@ -223,8 +258,6 @@ fn load_local_file(path: &Path, viewport: rustlite_paint::Size) -> Result<Page, 
     let bytes = std::fs::read(path).map_err(input_error)?;
     // Encoding sniffing arrives with networking; until then input is UTF-8,
     // with invalid sequences replaced (as a UTF-8 decoder in a browser would).
-    let source = String::from_utf8_lossy(&bytes);
-    let mut page = Page::new(viewport);
-    page.load_html(format!("file:{display}"), &source);
-    Ok(page)
+    let source = String::from_utf8_lossy(&bytes).into_owned();
+    Ok((format!("file:{display}"), source))
 }

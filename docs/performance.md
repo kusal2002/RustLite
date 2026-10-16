@@ -31,6 +31,11 @@ Performance targets are **hypotheses** until measured on a defined setup.
 | 2026-10-16 | Headless compose + raster, 1024×640, 10 display items | time | 0.47 ms | `rustlite --headless` log |
 | 2026-10-16 | HTML parse, 4.3 MB synthetic page (20k blocks with misnested formatting, lists, tables), 540,009 nodes, 20k parse errors | parse time (3 runs) | 194.8 / 193.0 / 193.6 ms (~22 MB/s) | `rustlite --dump-dom` `parse_ms` log field, release build |
 | 2026-10-16 | Same, peak memory | working set | Not measured (PowerShell 5.1 does not expose peak WS after exit; tooling TBD) | — |
+| 2026-10-16 | `tests/pages/sample.html` (24 elements, Georgia + Sinhala fallback), 900×900 headless | parse / style / layout / raster | 0.16 / 0.04 / 11.8 / 129 ms (raster includes first-time glyph rasterization) | `rustlite --headless` log, release |
+| 2026-10-16 | System font discovery (365 faces) | time | 32–35 ms | `system fonts loaded` log |
+| 2026-10-16 | Window with sample page, 1024×768 | frame time mean / p95 / max over 60 frames | 3.47 / 2.93 / 130 ms (max = first frame: fonts + layout + glyphs) | `--exit-after-frames 60` log |
+| 2026-10-16 | Window with sample page, 4 s after launch | working set / private bytes | 73.6 MB / 62.7 MB | PowerShell `Get-Process`. Up from 16.8 MB blank: font files are copied to the heap and fontdue parses whole faces (incl. the large Sinhala fallback face) |
+| 2026-10-16 | Release binary size | bytes | 2,202,624 (2.1 MiB; was 1.06 MiB before fonts/layout) | file size |
 | 2026-10-16 | Style computation, same page (300,005 elements, 160 rules incl. UA), 800×600 | style time (3 runs) | 71.4 / 88.1 / 71.7 ms; 299,987 elements served by style sharing | `rustlite --dump-style` `style_ms` log field, release build. Best case for sharing: the page repeats one structure 20,000 times |
 
 Single runs; no variance analysis yet. Criterion benchmarks are not set up yet; parse timings come from the
@@ -48,6 +53,9 @@ Single runs; no variance analysis yet. Criterion benchmarks are not set up yet; 
   leaf insertion skips the cycle walk; deep nesting parses in linear time.
 - Rules are indexed by the subject's ID, class, or tag, so each element tests
   only plausible rules; identical siblings share one `Rc<ComputedStyle>`.
-- Known costs to revisit: tag/attribute names are owned strings (no
+- Glyph bitmaps are cached (bounded at 4,096 entries); font selection and
+  fallback lookups are cached per context.
+- Known costs to revisit: font data copied per face and eager fontdue parsing
+  (the main memory cost now); tag/attribute names are owned strings (no
   interning); named-reference lookup is a linear scan; the style-sharing key
   clones the matched-rule list; `--dump-style` output is slow for huge pages.

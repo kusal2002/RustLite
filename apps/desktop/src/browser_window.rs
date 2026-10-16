@@ -11,7 +11,7 @@ use rustlite_paint::{DisplayList, Point, Size};
 use rustlite_renderer::{Canvas, CanvasError, rasterize};
 use softbuffer::{Context, SoftBufferError, Surface};
 use winit::dpi::PhysicalSize;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::ModifiersState;
 use winit::window::{Window, WindowId};
@@ -72,6 +72,7 @@ impl BrowserWindow {
         size: Size,
         debug_overlay: bool,
         exit_after_frames: Option<u64>,
+        initial: Option<(String, String)>,
     ) -> Result<Self, WindowError> {
         let attributes = Window::default_attributes()
             .with_title("RustLite")
@@ -91,12 +92,23 @@ impl BrowserWindow {
             "window created"
         );
 
+        let mut page = Page::new(viewport);
+        page.set_device_scale(window.scale_factor() as f32);
+        if let Some((url, source)) = initial {
+            page.load_html(url, &source);
+        }
+        let title = match page.title().filter(|t| !t.is_empty()) {
+            Some(t) => format!("{t} — RustLite"),
+            None => "RustLite".to_owned(),
+        };
+        window.set_title(&title);
+
         Ok(Self {
             surface,
             _context: context,
             window,
             surface_size: None,
-            page: Page::new(viewport),
+            page,
             toolbar,
             chrome: ChromeState {
                 debug_overlay,
@@ -127,7 +139,18 @@ impl BrowserWindow {
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 tracing::info!(scale_factor, "scale factor changed");
+                self.page.set_device_scale(scale_factor as f32);
                 self.window.request_redraw();
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let dy = match delta {
+                    // One notch scrolls 100 CSS px, like Chromium on Windows.
+                    MouseScrollDelta::LineDelta(_, y) => -y * 100.0,
+                    MouseScrollDelta::PixelDelta(p) => -(p.y as f32) / self.page.device_scale(),
+                };
+                if self.page.scroll_by(dy) {
+                    self.window.request_redraw();
+                }
             }
             WindowEvent::RedrawRequested => return self.redraw(),
             WindowEvent::ModifiersChanged(mods) => self.modifiers = mods.state(),
@@ -163,7 +186,22 @@ impl BrowserWindow {
                 self.window.request_redraw();
                 Flow::Continue
             }
+            Command::ScrollLines(n) => self.scroll(|page| page.scroll_by(n as f32 * 40.0)),
+            Command::ScrollPages(n) => self.scroll(|page| {
+                // Keep a little overlap between pages, as browsers do.
+                let page_height = page.css_viewport().1 * 0.875;
+                page.scroll_by(n as f32 * page_height)
+            }),
+            Command::ScrollToTop => self.scroll(|page| page.scroll_to(0.0)),
+            Command::ScrollToBottom => self.scroll(|page| page.scroll_to(f32::MAX)),
         }
+    }
+
+    fn scroll(&mut self, f: impl FnOnce(&mut Page) -> bool) -> Flow {
+        if f(&mut self.page) {
+            self.window.request_redraw();
+        }
+        Flow::Continue
     }
 
     fn set_cursor(&mut self, cursor: Option<Point>) {
@@ -225,7 +263,12 @@ impl BrowserWindow {
 
         let mut buffer = self.surface.buffer_mut()?;
         let mut canvas = Canvas::new(&mut buffer[..], inner.width, inner.height)?;
-        let raster = rasterize(&mut canvas, &self.frame_list, WINDOW_BACKGROUND);
+        let raster = rasterize(
+            &mut canvas,
+            &self.frame_list,
+            WINDOW_BACKGROUND,
+            self.page.glyph_rasterizer(),
+        );
         self.window.pre_present_notify();
         buffer.present()?;
 

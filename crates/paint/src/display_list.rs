@@ -1,8 +1,18 @@
-use crate::{Color, Rect};
+use crate::{Color, GlyphRun, Rect};
 
 /// One drawing command. Items are painted in list order (painter's algorithm).
 #[derive(Debug, Clone, PartialEq)]
 pub enum DisplayItem {
+    /// Draw `run` with its baseline origin at (`x`, `y`) device px. Glyph
+    /// offsets and the font size are in CSS px and multiplied by `scale`
+    /// (the device pixel ratio) at raster time.
+    Text {
+        x: f32,
+        y: f32,
+        scale: f32,
+        color: Color,
+        run: GlyphRun,
+    },
     /// Fill `rect` with `color`.
     SolidRect { rect: Rect, color: Color },
     /// Stroke the inside edge of `rect` with a uniform border of `width` pixels.
@@ -64,20 +74,33 @@ impl DisplayList {
                 r.height,
             )
         };
-        self.items
-            .extend(other.items.iter().map(|item| match *item {
-                DisplayItem::SolidRect { rect, color } => DisplayItem::SolidRect {
-                    rect: shift(rect),
-                    color,
-                },
-                DisplayItem::Border { rect, width, color } => DisplayItem::Border {
-                    rect: shift(rect),
-                    width,
-                    color,
-                },
-                DisplayItem::PushClip { rect } => DisplayItem::PushClip { rect: shift(rect) },
-                DisplayItem::PopClip => DisplayItem::PopClip,
-            }));
+        self.items.extend(other.items.iter().map(|item| match item {
+            DisplayItem::Text {
+                x,
+                y,
+                scale,
+                color,
+                run,
+            } => DisplayItem::Text {
+                x: x + dx as f32,
+                y: y + dy as f32,
+                scale: *scale,
+                color: *color,
+                // Cheap: the glyph array is reference-counted.
+                run: run.clone(),
+            },
+            DisplayItem::SolidRect { rect, color } => DisplayItem::SolidRect {
+                rect: shift(*rect),
+                color: *color,
+            },
+            DisplayItem::Border { rect, width, color } => DisplayItem::Border {
+                rect: shift(*rect),
+                width: *width,
+                color: *color,
+            },
+            DisplayItem::PushClip { rect } => DisplayItem::PushClip { rect: shift(*rect) },
+            DisplayItem::PopClip => DisplayItem::PopClip,
+        }));
     }
 
     /// Removes all items while keeping the allocation for reuse across frames.

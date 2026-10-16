@@ -1,13 +1,15 @@
-//! Coordinates the page pipeline: document → style → (layout →) display list.
+//! Coordinates the page pipeline: document → style → layout → display list.
 //!
-//! Current scope (Phase 3): a page shows either `about:blank` or an HTML
-//! document parsed by `rustlite-html`, with computed styles from
-//! `rustlite-style`. Layout does not exist yet (Phase 4), so an HTML document
-//! still paints as an empty white canvas. Styles are computed lazily and
-//! invalidated when the viewport changes (viewport units depend on it).
+//! Current scope (Phase 4): a page shows either `about:blank` or an HTML
+//! document parsed by `rustlite-html`, styled by `rustlite-style`, laid out
+//! and painted by `rustlite-layout`. Each stage is computed lazily and cached;
+//! a viewport change invalidates styles (viewport units) and layout, a scroll
+//! only repaints.
 
 use rustlite_dom::Document;
-use rustlite_paint::{Color, DisplayList, Rect, Size};
+use rustlite_fonts::FontContext;
+use rustlite_layout::LayoutTree;
+use rustlite_paint::{Color, DisplayList, GlyphRasterizer, NoGlyphs, Rect, Size};
 use rustlite_style::{ComputedStyles, Stylist};
 
 /// A parsed HTML document, its stylesheets, and where it came from.
@@ -19,6 +21,7 @@ pub struct HtmlDocument {
     pub parse_errors: usize,
     pub stylist: Stylist,
     styles: Option<ComputedStyles>,
+    layout: Option<LayoutTree>,
 }
 
 /// What a page currently shows.
@@ -42,11 +45,21 @@ impl Content {
 #[derive(Debug)]
 pub struct Page {
     content: Content,
+    /// Viewport in device px.
     viewport: Size,
+    /// Device pixels per CSS px.
+    device_scale: f32,
+    /// Scroll offset in CSS px.
+    scroll_y: f32,
+    /// Created on first layout of an HTML document (loading system fonts is
+    /// not free), unless supplied with [`Page::with_fonts`].
+    fonts: Option<FontContext>,
+    no_glyphs: NoGlyphs,
     display_list: DisplayList,
     paint_dirty: bool,
     paint_count: u64,
     style_count: u64,
+    layout_count: u64,
 }
 
 impl Page {
@@ -54,11 +67,59 @@ impl Page {
         Self {
             content: Content::Blank,
             viewport,
+            device_scale: 1.0,
+            scroll_y: 0.0,
+            fonts: None,
+            no_glyphs: NoGlyphs,
             display_list: DisplayList::new(),
             paint_dirty: true,
             paint_count: 0,
             style_count: 0,
+            layout_count: 0,
         }
+    }
+
+    /// A page that uses `fonts` instead of loading the system fonts.
+    pub fn with_fonts(viewport: Size, fonts: FontContext) -> Self {
+        Self {
+            fonts: Some(fonts),
+            ..Self::new(viewport)
+        }
+    }
+
+    /// The viewport in CSS px (what layout and viewport units see).
+    pub fn css_viewport(&self) -> (f32, f32) {
+        (
+            self.viewport.width as f32 / self.device_scale,
+            self.viewport.height as f32 / self.device_scale,
+        )
+    }
+
+    pub fn device_scale(&self) -> f32 {
+        self.device_scale
+    }
+
+    /// Sets the device pixel ratio. Changing it changes the CSS viewport, so
+    /// styles and layout are invalidated.
+    pub fn set_device_scale(&mut self, scale: f32) {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        if scale != self.device_scale {
+            self.device_scale = scale;
+            self.invalidate_layout();
+        }
+    }
+
+    fn invalidate_layout(&mut self) {
+        self.paint_dirty = true;
+        if let Content::Html(doc) = &mut self.content {
+            doc.styles = None;
+            doc.layout = None;
+        }
+        self.scroll_by(0.0);
     }
 
     /// Number of full style recalculations (for invalidation tests).
@@ -66,31 +127,76 @@ impl Page {
         self.style_count
     }
 
+    /// Number of full layouts (for invalidation tests).
+    pub fn layout_count(&self) -> u64 {
+        self.layout_count
+    }
+
+    fn ensure_styles(&mut self) {
+        let Content::Html(doc) = &mut self.content else {
+            return;
+        };
+        if doc.styles.is_some() {
+            return;
+        }
+        let start = std::time::Instant::now();
+        let viewport = (
+            self.viewport.width as f32 / self.device_scale,
+            self.viewport.height as f32 / self.device_scale,
+        );
+        let (styles, stats) = rustlite_style::compute_styles(&doc.dom, &doc.stylist, viewport);
+        tracing::info!(
+            elements = stats.elements,
+            shared = stats.shared,
+            rules = stats.sheets.rules,
+            author_sheets = stats.sheets.author_sheets,
+            dropped_rules = stats.sheets.dropped_rules,
+            skipped_at_rules = stats.sheets.skipped_at_rules,
+            style_ms = start.elapsed().as_secs_f64() * 1000.0,
+            "styles computed"
+        );
+        doc.styles = Some(styles);
+        doc.layout = None;
+        self.style_count += 1;
+    }
+
     /// The document's computed styles, recomputed if invalidated.
     /// `None` for `about:blank`.
     pub fn computed_styles(&mut self) -> Option<(&Document, &ComputedStyles)> {
+        self.ensure_styles();
+        let Content::Html(doc) = &self.content else {
+            return None;
+        };
+        doc.styles.as_ref().map(|s| (&doc.dom, s))
+    }
+
+    /// The laid-out document, recomputed if invalidated. `None` for `about:blank`.
+    pub fn layout(&mut self) -> Option<(&Document, &LayoutTree)> {
+        self.ensure_styles();
         let Content::Html(doc) = &mut self.content else {
             return None;
         };
-        if doc.styles.is_none() {
+        if doc.layout.is_none() {
+            let fonts = self
+                .fonts
+                .get_or_insert_with(FontContext::with_system_fonts);
             let start = std::time::Instant::now();
-            let viewport = (self.viewport.width as f32, self.viewport.height as f32);
-            let (styles, stats) = rustlite_style::compute_styles(&doc.dom, &doc.stylist, viewport);
-            tracing::info!(
-                elements = stats.elements,
-                shared = stats.shared,
-                rules = stats.sheets.rules,
-                author_sheets = stats.sheets.author_sheets,
-                dropped_rules = stats.sheets.dropped_rules,
-                skipped_at_rules = stats.sheets.skipped_at_rules,
-                style_ms = start.elapsed().as_secs_f64() * 1000.0,
-                "styles computed"
+            let viewport = (
+                self.viewport.width as f32 / self.device_scale,
+                self.viewport.height as f32 / self.device_scale,
             );
-            doc.styles = Some(styles);
-            self.style_count += 1;
+            let styles = doc.styles.as_ref()?;
+            let tree = rustlite_layout::layout_document(&doc.dom, styles, fonts, viewport);
+            tracing::info!(
+                document_height = tree.document_height,
+                layout_ms = start.elapsed().as_secs_f64() * 1000.0,
+                "layout computed"
+            );
+            doc.layout = Some(tree);
+            self.layout_count += 1;
         }
         let doc = &**doc;
-        doc.styles.as_ref().map(|s| (&doc.dom, s))
+        doc.layout.as_ref().map(|l| (&doc.dom, l))
     }
 
     pub fn content(&self) -> &Content {
@@ -121,7 +227,9 @@ impl Page {
             parse_errors: out.error_count,
             stylist,
             styles: None,
+            layout: None,
         }));
+        self.scroll_y = 0.0;
         self.paint_dirty = true;
     }
 
@@ -146,17 +254,43 @@ impl Page {
         self.viewport
     }
 
-    /// Updates the viewport, invalidating paint only if the size actually changed.
+    /// Updates the viewport, invalidating only if the size actually changed.
     pub fn set_viewport(&mut self, viewport: Size) {
         if self.viewport != viewport {
             tracing::debug!(?viewport, "page viewport changed");
             self.viewport = viewport;
-            self.paint_dirty = true;
-            // Viewport units make computed values depend on the viewport.
-            if let Content::Html(doc) = &mut self.content {
-                doc.styles = None;
-            }
+            // Viewport units make computed values depend on the viewport, and
+            // layout depends on its width.
+            self.invalidate_layout();
         }
+    }
+
+    pub fn scroll_y(&self) -> f32 {
+        self.scroll_y
+    }
+
+    /// Largest valid scroll offset (0 if the document fits the viewport).
+    pub fn max_scroll(&mut self) -> f32 {
+        let viewport_height = self.css_viewport().1;
+        self.layout()
+            .map_or(0.0, |(_, t)| (t.document_height - viewport_height).max(0.0))
+    }
+
+    /// Scrolls by `dy` px (positive = down), clamped to the document.
+    /// Returns true if the position changed.
+    pub fn scroll_by(&mut self, dy: f32) -> bool {
+        self.scroll_to(self.scroll_y + dy)
+    }
+
+    /// Scrolls to `y`, clamped to the document. Returns true if it changed.
+    pub fn scroll_to(&mut self, y: f32) -> bool {
+        let clamped = y.clamp(0.0, self.max_scroll()).round();
+        if clamped == self.scroll_y {
+            return false;
+        }
+        self.scroll_y = clamped;
+        self.paint_dirty = true;
+        true
     }
 
     pub fn needs_paint(&self) -> bool {
@@ -172,15 +306,26 @@ impl Page {
     /// viewport's top-left), rebuilding it only when invalidated.
     pub fn display_list(&mut self) -> &DisplayList {
         if self.paint_dirty {
-            self.display_list.clear();
-            // Both kinds of content paint the initial canvas; HTML content
-            // itself is painted once style and layout exist.
-            self.display_list
-                .fill_rect(Rect::from_size(self.viewport), Color::WHITE);
+            let mut list = std::mem::take(&mut self.display_list);
+            list.clear();
+            let (scroll_y, scale) = (self.scroll_y, self.device_scale);
+            match self.layout() {
+                Some((_, tree)) => rustlite_layout::paint(tree, scroll_y, scale, &mut list),
+                None => list.fill_rect(Rect::from_size(self.viewport), Color::WHITE),
+            }
+            self.display_list = list;
             self.paint_dirty = false;
             self.paint_count += 1;
         }
         &self.display_list
+    }
+
+    /// Glyph source for rasterizing this page's display list.
+    pub fn glyph_rasterizer(&mut self) -> &mut dyn GlyphRasterizer {
+        match &mut self.fonts {
+            Some(f) => f,
+            None => &mut self.no_glyphs,
+        }
     }
 }
 
@@ -265,5 +410,84 @@ mod tests {
         assert_eq!(page.title(), None);
         page.load_html("test:doc", "<p>no title");
         assert_eq!(page.title(), None);
+    }
+
+    /// A page with no fonts loaded: layout of text-free content is still exact.
+    fn fontless(viewport: Size) -> Page {
+        Page::with_fonts(viewport, FontContext::new())
+    }
+
+    #[test]
+    fn layout_is_cached_and_scroll_only_repaints() {
+        let mut page = fontless(Size::new(200, 100));
+        page.load_html(
+            "test:doc",
+            "<!DOCTYPE html><body style='margin:0'><div style='height: 300px; background: red'></div>",
+        );
+        let (_, tree) = page.layout().unwrap();
+        assert_eq!(tree.document_height, 300.0);
+        assert_eq!(page.max_scroll(), 200.0);
+        page.display_list();
+        assert!(page.scroll_by(50.0));
+        assert!(page.needs_paint());
+        page.display_list();
+        assert_eq!(page.layout_count(), 1, "scrolling must not relayout");
+        assert!(!page.scroll_by(-500.0) || page.scroll_y() == 0.0);
+        assert_eq!(page.scroll_y(), 0.0);
+        page.scroll_to(1e9);
+        assert_eq!(page.scroll_y(), 200.0);
+    }
+
+    #[test]
+    fn viewport_change_relayouts_and_clamps_scroll() {
+        let mut page = fontless(Size::new(200, 100));
+        page.load_html(
+            "test:doc",
+            "<!DOCTYPE html><body style='margin:0'><div style='height: 300px'></div>",
+        );
+        page.scroll_to(200.0);
+        page.set_viewport(Size::new(200, 250));
+        assert_eq!(page.scroll_y(), 50.0);
+        assert_eq!(page.layout_count(), 2);
+    }
+
+    #[test]
+    fn html_paints_backgrounds_with_scroll_offset() {
+        let mut page = fontless(Size::new(100, 100));
+        page.load_html(
+            "test:doc",
+            "<!DOCTYPE html><body style='margin:0'><div style='height: 40px'></div><div style='height: 300px; background: rgb(0, 0, 255)'></div>",
+        );
+        page.scroll_to(30.0);
+        let blue = page.display_list().items().iter().find_map(|i| match i {
+            rustlite_paint::DisplayItem::SolidRect { rect, color }
+                if *color == Color::rgb(0, 0, 255) =>
+            {
+                Some(*rect)
+            }
+            _ => None,
+        });
+        assert_eq!(blue, Some(Rect::new(0, 10, 100, 300)));
+    }
+
+    #[test]
+    fn device_scale_lays_out_in_css_px_and_paints_in_device_px() {
+        let mut page = fontless(Size::new(200, 100));
+        page.set_device_scale(2.0);
+        assert_eq!(page.css_viewport(), (100.0, 50.0));
+        page.load_html(
+            "test:doc",
+            "<!DOCTYPE html><body style='margin:0'><div style='width: 50vw; height: 10px; background: rgb(0, 0, 255)'></div>",
+        );
+        let blue = page.display_list().items().iter().find_map(|i| match i {
+            rustlite_paint::DisplayItem::SolidRect { rect, color }
+                if *color == Color::rgb(0, 0, 255) =>
+            {
+                Some(*rect)
+            }
+            _ => None,
+        });
+        // 50vw of a 100 CSS px viewport = 50 CSS px = 100 device px.
+        assert_eq!(blue, Some(Rect::new(0, 0, 100, 20)));
     }
 }

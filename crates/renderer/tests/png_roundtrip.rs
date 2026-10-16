@@ -20,7 +20,12 @@ fn encodes_well_formed_png() {
     let mut fb = Framebuffer::new(3, 2).unwrap();
     let mut list = DisplayList::new();
     list.fill_rect(Rect::new(0, 0, 1, 1), Color::rgb(10, 20, 30));
-    rasterize(&mut fb.canvas(), &list, Color::WHITE);
+    rasterize(
+        &mut fb.canvas(),
+        &list,
+        Color::WHITE,
+        &mut rustlite_paint::NoGlyphs,
+    );
 
     let mut png = Vec::new();
     encode_png(&fb, &mut png).unwrap();

@@ -6,13 +6,15 @@ browser's own engine and POSTs them back:
 * /html  - tests/html/*.html parsed with DOMParser, serialized in
            html5lib-tests tree format -> tests/html/<name>.tree,
            document modes -> tests/html/oracle.txt
+* /layout - tests/layout/*.html rendered in an 800x600 iframe; getBoundingClientRect
+           for every element -> tests/layout/<name>.boxes
 * /style - tests/style/*.html rendered in an 800x600 iframe; getComputedStyle
            values for every element -> tests/style/<name>.styles,
            metadata (user agent, devicePixelRatio) -> tests/style/oracle.txt
 
 Usage:
     python scripts/oracle/server.py [port]
-Then open http://127.0.0.1:<port>/html and/or /style in the reference browser.
+Then open http://127.0.0.1:<port>/html, /style and/or /layout in the reference browser.
 
 Binds to 127.0.0.1 only and accepts results only for fixtures that exist.
 """
@@ -27,6 +29,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 SUITES = {
     "html": (ROOT / "tests" / "html", ".tree"),
     "style": (ROOT / "tests" / "style", ".styles"),
+    "layout": (ROOT / "tests" / "layout", ".boxes"),
 }
 NAME_RE = re.compile(r"^[a-z0-9-]+$")
 
@@ -107,6 +110,33 @@ run('style', f => new Promise(resolve => {
 </script>
 """
 
+LAYOUT_PAGE = """<!DOCTYPE html><meta charset=utf-8><title>RustLite layout oracle</title>
+<pre id=log>running…</pre>
+<script>%s
+function fmt(v) {
+  const s = (Math.round(v * 1000) / 1000).toFixed(3).replace(/0+$/, '').replace(/\\.$/, '');
+  return s === '-0' ? '0' : s;
+}
+run('layout', f => new Promise(resolve => {
+  const frame = document.createElement('iframe');
+  frame.style.cssText = 'width:800px;height:600px;border:0;display:block';
+  frame.onload = () => {
+    const doc = frame.contentDocument;
+    const lines = [];
+    for (const el of doc.querySelectorAll('*')) {
+      const r = el.getBoundingClientRect();
+      lines.push(`<${el.localName}${el.id ? '#' + el.id : ''}> ${fmt(r.x)} ${fmt(r.y)} ${fmt(r.width)} ${fmt(r.height)}`);
+    }
+    const mode = doc.compatMode;
+    frame.remove();
+    resolve({ output: lines.join('\\n') + '\\n', mode });
+  };
+  frame.srcdoc = f.source;
+  document.body.appendChild(frame);
+}));
+</script>
+""" % COMMON_JS
+
 DEFAULT_STYLE_PROPS = [
     "display", "color", "background-color", "font-size", "font-weight", "font-style",
     "line-height", "text-align", "overflow-x", "overflow-y",
@@ -133,6 +163,8 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/style":
             page = STYLE_PAGE % (COMMON_JS, json.dumps(DEFAULT_STYLE_PROPS))
             self._send(200, page, "text/html; charset=utf-8")
+        elif self.path == "/layout":
+            self._send(200, LAYOUT_PAGE, "text/html; charset=utf-8")
         elif self.path.endswith("/fixtures") and self.path.strip("/").split("/")[0] in SUITES:
             directory, _ = SUITES[self.path.strip("/").split("/")[0]]
             fixtures = [

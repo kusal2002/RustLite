@@ -28,6 +28,8 @@ fn main() -> ExitCode {
         app::dump_dom(path).map(|tree| print!("{tree}"))
     } else if let Some(path) = &options.dump_style {
         app::dump_style(path, options.size).map(|styles| print!("{styles}"))
+    } else if let Some(path) = &options.dump_layout {
+        app::dump_layout(path, options.size).map(|boxes| print!("{boxes}"))
     } else if let Some(path) = &options.headless_output {
         app::render_headless(&options, path).map(drop)
     } else {

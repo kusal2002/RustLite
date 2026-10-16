@@ -25,7 +25,10 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | CSS-001 | CSS tokenizer, parser, selectors, cascade, computed values | Verified on reference browser (fixture set) | 11/11 style goldens match Chromium 152; [spec](../research/specifications/CSS-001.md) |
 | CORE-003 | Page computes styles lazily; viewport change invalidates | Tested | `browser-core` tests |
 | DIAG-004 | `--dump-style` CLI | Tested | `apps/desktop/tests/smoke.rs` |
-| TEXT-001 | Text shaping/rendering | Planned | — |
+| FONT-001 | System fonts, selection, fallback, shaping, glyph raster | Tested | `rustlite-fonts` tests ([ADR-0002](../research/decisions/ADR-0002-font-stack.md)) |
+| LAYOUT-001 | Box tree, block layout, margin collapsing, inline layout, line breaking | Verified on reference browser (fixture set) | 9/9 geometry goldens match Chromium 152 (max 0.032px off); [spec](../research/specifications/LAYOUT-001.md) |
+| RENDER-005 | Paint of backgrounds, borders, text; device scale; overflow clip | Tested | `layout` + `renderer` tests; headless render of `tests/pages/sample.html` |
+| SHELL-001 | Open a local file, title, wheel/keyboard scrolling | Tested | `commands` tests; windowed run with sample page |
 | NET-001 | HTTP(S) loading | Planned | — |
 | NAV-001 | Navigation state machine | Planned | — |
 | JS-001 | JS runtime | Deferred (Phase 9) | — |
@@ -34,13 +37,14 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 | Platform | Build | Tests | Window | Notes |
 |---|---|---|---|---|
-| Windows 11 x64 (MSVC) | ✅ | ✅ 137/137 | ✅ | Ryzen 5 5600G, Radeon iGPU |
-| Linux x64 | Unverified | Unverified | Unverified | CI job defined in `.github/workflows/ci.yml`, not yet run |
-| macOS | Unverified | Unverified | Unverified | CI job defined, not yet run |
+| Windows 11 x64 (MSVC) | ✅ | ✅ 165/165 | ✅ | Ryzen 5 5600G, Radeon iGPU |
+| Linux x64 | ✅ CI | ✅ CI | Unverified | CI (ubuntu-latest) green for Phases 1–3; no display in CI |
+| macOS | ✅ CI | ✅ CI (after `ed08a83`) | Unverified | CI (macos-latest) failed Phase 3 on a Windows-specific golden value; fixed in `ed08a83` (not yet re-run) |
 
 ## Known limitations
 
-- HTML is parsed and styled but not rendered (no layout yet).
+- Layout covers normal flow only: no floats, positioning, flex, grid, tables,
+  images or list markers yet (see compatibility.md).
 - CSS gaps (at-rules, `:not()`, `var()`, `calc()`, external sheets) are listed in
   [compatibility.md](compatibility.md#css-css-001--tested-verified-on-reference-browser).
 - HTML parser deviations are listed in [compatibility.md](compatibility.md#html-parsing-html-001--tested-verified-on-reference-browser).
@@ -94,3 +98,23 @@ Tested · Verified on reference browser · Blocked · Deferred.
 - **Measurements:** 300,005 elements styled in ~72 ms (release), see
   [performance.md](performance.md).
 - **Next:** Phase 4, block and inline layout.
+
+### 2026-10-16 — Phase 4: fonts, layout, and rendering real pages
+
+- **What:** `rustlite-fonts` (fontdb discovery, CSS face selection, per-character
+  fallback, rustybuzz shaping, fontdue glyph raster, bounded glyph cache);
+  `rustlite-layout` (box tree with anonymous blocks, block layout with margin
+  collapsing, inline layout with whitespace collapsing and line breaking, paint);
+  text in the display list and renderer; device-pixel-ratio support; the desktop
+  app opens a local HTML file, shows its title, and scrolls (wheel, arrows,
+  Page Up/Down, Space, Home/End); `--dump-layout`; `/layout` oracle page.
+- **CI check:** Windows and Linux green for all phases; macOS failed Phase 3 only
+  on the Windows-recorded default font family, fixed in `ed08a83`.
+- **Evidence-driven fixes:** the layout oracle found `<br>` boxes, collapsed-through
+  positioning, a 3px initial border-width bug, and Blink's floored half-leading.
+  All 9 fixtures now match Chromium; max deviation 0.032px.
+- **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 165 passed ·
+  release build ✅ · windowed run with `tests/pages/sample.html` ✅.
+- **Measurements:** see [performance.md](performance.md) (memory with a page loaded
+  is 73.6 MB; font data handling is the main cost).
+- **Next:** Phase 5 completion (images, list markers) and Phase 6 networking.

@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use rustlite_paint::Size;
 
 pub const USAGE: &str = "\
-Usage: rustlite [OPTIONS]
+Usage: rustlite [OPTIONS] [HTML_FILE]
+
+Opens HTML_FILE (a local file) if given, otherwise about:blank.
 
 Options:
   --size <WxH>              Initial window size in physical pixels (default 1024x768)
@@ -13,6 +15,7 @@ Options:
   --exit-after-frames <N>   Close the window after presenting N frames (smoke testing)
   --dump-dom <HTML_FILE>    Parse a local HTML file and print its DOM tree (html5lib format)
   --dump-style <HTML_FILE>  Print computed styles of a local HTML file (viewport = --size)
+  --dump-layout <HTML_FILE> Print element border boxes after layout (viewport = --size)
   --debug-overlay           Start with the paint debug overlay enabled
   -h, --help                Print this help
 ";
@@ -23,9 +26,12 @@ pub struct Options {
     pub headless_output: Option<PathBuf>,
     pub dump_dom: Option<PathBuf>,
     pub dump_style: Option<PathBuf>,
+    pub dump_layout: Option<PathBuf>,
     pub exit_after_frames: Option<u64>,
     pub debug_overlay: bool,
     pub help: bool,
+    /// Local HTML file to open (named explicitly by the user).
+    pub open: Option<PathBuf>,
 }
 
 impl Default for Options {
@@ -35,9 +41,11 @@ impl Default for Options {
             headless_output: None,
             dump_dom: None,
             dump_style: None,
+            dump_layout: None,
             exit_after_frames: None,
             debug_overlay: false,
             help: false,
+            open: None,
         }
     }
 }
@@ -89,6 +97,12 @@ impl Options {
                         .ok_or(OptionsError::MissingValue("--dump-style"))?;
                     opts.dump_style = Some(PathBuf::from(value));
                 }
+                "--dump-layout" => {
+                    let value = args
+                        .next()
+                        .ok_or(OptionsError::MissingValue("--dump-layout"))?;
+                    opts.dump_layout = Some(PathBuf::from(value));
+                }
                 "--exit-after-frames" => {
                     let value = args
                         .next()
@@ -103,6 +117,9 @@ impl Options {
                             reason: "expected a positive integer",
                         })?;
                     opts.exit_after_frames = Some(n);
+                }
+                _ if !arg.starts_with('-') && opts.open.is_none() => {
+                    opts.open = Some(PathBuf::from(arg));
                 }
                 _ => return Err(OptionsError::Unknown(arg)),
             }

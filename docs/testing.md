@@ -24,6 +24,9 @@ Both run: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- 
 | Golden HTML | `tests/html/*.html` → `*.tree` via `crates/html/tests/golden.rs` | Expected trees come from a reference browser (below) |
 | Golden style | `tests/style/*.html` → `*.styles` via `crates/style/tests/golden.rs` | `getComputedStyle` from a reference browser, 800×600 |
 | Style dump | `rustlite --size 800x600 --dump-style file.html` | Same format as the style goldens |
+| Golden layout | `tests/layout/*.html` → `*.boxes` via `crates/layout/tests/golden.rs` | `getBoundingClientRect` from a reference browser, 800×600; per-fixture tolerance; text fixtures skip when their font is missing |
+| Layout dump | `rustlite --size 800x600 --dump-layout file.html` | Same format as the layout goldens |
+| Visual check | `rustlite --headless out.png tests/pages/sample.html` | Renders a real page to PNG |
 | DOM dump | `rustlite --dump-dom file.html` | Prints RustLite's tree in html5lib format for ad-hoc diffs |
 | Screenshot | `rustlite --headless out.png` | Deterministic CPU raster; golden images from Phase 5 |
 | Differential | REA + Chrome | See [rea-workflow.md](rea-workflow.md) |
@@ -48,8 +51,12 @@ compliance is claimed.
 python scripts/oracle/server.py 8765
 ```
 
-Open `http://127.0.0.1:8765/html` and `http://127.0.0.1:8765/style` in the
-reference browser. `/html` parses every `tests/html/*.html` with `DOMParser`
+Open `http://127.0.0.1:8765/html`, `/style` and `/layout` in the
+reference browser. `/layout` renders `tests/layout/*.html` in an 800×600
+`srcdoc` iframe and writes `*.boxes` from `getBoundingClientRect`. Layout
+fixtures declare `<!-- tolerance: px -->` and, if they contain text,
+`<!-- fonts: Family -->`; they are skipped with a note when the font is missing
+(e.g. Times New Roman on Linux CI). `/html` parses every `tests/html/*.html` with `DOMParser`
 and writes `*.tree`; `/style` renders every `tests/style/*.html` in an
 800×600 `srcdoc` iframe and writes `*.styles` from `getComputedStyle`. Each
 writes `oracle.txt` (user agent, device pixel ratio, document modes).

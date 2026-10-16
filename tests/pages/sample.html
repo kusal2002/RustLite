@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RustLite sample page</title>
+<style>
+  body { font-family: Georgia, serif; background: #f4f1ea; color: #222; margin: 0; }
+  header { background: #263238; color: white; padding: 16px 24px; }
+  header h1 { margin: 0; font-size: 28px; }
+  header p { margin: 4px 0 0; color: #b0bec5; }
+  main { width: 640px; margin: 24px auto; background: white; padding: 24px 32px;
+         border: 1px solid #d7ccc8; }
+  h2 { color: #6d4c41; border-bottom: 2px solid #d7ccc8; }
+  .note { background: #fff8e1; border-left: 4px solid #ffb300; padding: 8px 12px; }
+  .center { text-align: center; }
+  .right { text-align: right; color: gray; font-size: 13px; }
+  ul li { margin: 4px 0; }
+  footer { text-align: center; font-size: 12px; color: #8d6e63; padding: 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>RustLite</h1>
+  <p>An original browser engine written in Rust</p>
+</header>
+<main>
+  <h2>What renders today</h2>
+  <p>This page is parsed by RustLite's own <b>HTML tokenizer and tree builder</b>,
+  styled by its <i>CSS cascade</i>, and laid out by its block and inline layout
+  engine with real font shaping and line breaking. Long paragraphs wrap at spaces
+  to fit the containing block, and margins between blocks collapse the way the
+  CSS 2.1 specification describes.</p>
+  <p class="note">Text in several sizes and weights, borders, backgrounds, padding,
+  auto margins and text alignment are all handled by the first layout layer.</p>
+  <ul>
+    <li>HTML parsing verified against Chromium on 32 fixtures</li>
+    <li>CSS computed styles verified on 11 fixtures</li>
+    <li>Block and inline layout with margin collapsing</li>
+  </ul>
+  <p class="center">Centered text<br>with a forced line break</p>
+  <p lang="si">සිංහල අකුරු: ශ්‍රී ලංකාව</p>
+  <p class="right">Right-aligned, smaller, gray.</p>
+</main>
+<footer>Rendered with RustLite</footer>
+</body>
+</html>

@@ -18,10 +18,12 @@ css (tokenizer, parser) ─► style (cascade, computed values)
                                   paint (display list) ─► renderer (raster) ─► platform (present)
 ```
 
-Status today (Phase 3): `browser-core` owns a `Page` that is either
-`about:blank` or an HTML document parsed by `rustlite-html` into a
-`rustlite-dom` tree, with computed styles from `rustlite-style`. With no
-layout yet, both paint as a white canvas. The desktop shell composes
+Status today (Phase 4): `browser-core` owns a `Page` that is either
+`about:blank` or an HTML document: parsed by `rustlite-html` into a
+`rustlite-dom` tree, styled by `rustlite-style`, laid out by `rustlite-layout`
+(using `rustlite-fonts` for shaping and metrics), and painted into a display
+list that the CPU renderer rasterizes with glyphs from the font context.
+Each stage is cached and invalidated independently (scrolling only repaints). The desktop shell composes
 browser chrome + page display list and rasterizes it on the CPU into the
 window's presentation buffer. Every stage between "document" and "display list"
 is still to be built (see [roadmap](roadmap.md)).
@@ -39,9 +41,11 @@ is still to be built (see [roadmap](roadmap.md)).
 | `crates/html` | `rustlite-html` | WHATWG tokenizer + tree builder | Implemented (see compatibility.md) |
 | `crates/css` | `rustlite-css` | CSS tokenizer, rule/declaration parser, selectors + specificity | Implemented (first layer) |
 | `crates/style` | `rustlite-style` | UA sheet, matching, cascade, computed values, serialization | Implemented (first layer) |
+| `crates/fonts` | `rustlite-fonts` | Font discovery, selection, fallback, shaping, metrics, glyph raster | Implemented ([ADR-0002](../research/decisions/ADR-0002-font-stack.md)) |
+| `crates/layout` | `rustlite-layout` | Box tree, block/inline layout, line breaking, paint | Implemented (normal flow) |
 
 Planned crates are created when their first real code lands, not as empty
-shells: `layout`, `fonts`, `net`, `platform`,
+shells: `net`, `platform`,
 `js-runtime`, `web-apis`, `storage`. Their responsibilities follow the master
 specification §3.
 
@@ -49,9 +53,9 @@ specification §3.
 
 ```
 desktop ──► browser-core ──► html ──► dom
-   │              ├──────────► style ─► css
-   │              │              └────► dom
-   │              └──────────► paint
+   │              ├──────────► style ──► css, dom
+   │              ├──────────► layout ─► style, fonts, paint, dom
+   │              └──────────► fonts ──► paint
    ├──► renderer ─────────────► paint
    └──► diagnostics
 ```
@@ -81,9 +85,13 @@ windows.
 | `softbuffer 0.4` | Present a CPU pixel buffer to a window | Win/macOS/Linux (X11+Wayland, dlopen) | MIT/Apache-2.0 | Small; no GPU stack. |
 | `tracing 0.1`, `tracing-subscriber 0.3` | Structured logging | All | MIT | Small. `env-filter` + `fmt` only. |
 | `thiserror 2` | Typed errors | All | MIT/Apache-2.0 | Proc-macro, compile-time only. |
+| `fontdb 0.24` | System font discovery and CSS-style matching | All (pure Rust; reads fontconfig files on Linux) | MIT | Indexes ~365 faces in ~35 ms. |
+| `rustybuzz 0.20` | Shaping (HarfBuzz port) | All | MIT | Pure Rust. |
+| `ttf-parser 0.25` | Font tables, metrics, cmap | All | MIT/Apache-2.0 | Shared by fontdb and rustybuzz. |
+| `fontdue 0.9` | Glyph rasterization | All | MIT/Apache-2.0/Zlib | Parses whole faces eagerly (memory cost; see roadmap). |
 
-Deferred until needed: `wgpu` (GPU backend), `rustybuzz`/`fontdue` (text),
+Deferred until needed: `wgpu` (GPU backend),
 `url`, `rustls`/HTTP client, `image`, `boa_engine`, `rusqlite`, `criterion`,
 `proptest`. Each will be evaluated when its milestone starts.
 
-Release binary (Windows x64, thin LTO, `panic=abort`): **1.06 MiB**.
+Release binary (Windows x64, thin LTO, `panic=abort`): **2.1 MiB** (1.06 MiB before fonts/layout).

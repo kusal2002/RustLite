@@ -12,7 +12,7 @@ mod png;
 pub use canvas::{Canvas, CanvasError, Framebuffer, pack_rgb, unpack_rgb};
 pub use png::{PngError, encode_png};
 
-use rustlite_paint::{Color, DisplayItem, DisplayList, Rect};
+use rustlite_paint::{Color, DisplayItem, DisplayList, GlyphRasterizer, Rect};
 
 /// Upper bound on nested clips. Deeper nesting is a bug in the paint stage, not
 /// something web content should be able to force us to allocate for.
@@ -28,7 +28,13 @@ pub struct RasterStats {
 }
 
 /// Paints `list` onto `canvas` in order, after clearing it to `background`.
-pub fn rasterize(canvas: &mut Canvas<'_>, list: &DisplayList, background: Color) -> RasterStats {
+/// Text items get their glyph bitmaps from `glyphs`.
+pub fn rasterize(
+    canvas: &mut Canvas<'_>,
+    list: &DisplayList,
+    background: Color,
+    glyphs: &mut dyn GlyphRasterizer,
+) -> RasterStats {
     let bounds = canvas.bounds();
     let mut stats = RasterStats::default();
     stats.pixels_written += canvas.fill(bounds, background);
@@ -39,6 +45,25 @@ pub fn rasterize(canvas: &mut Canvas<'_>, list: &DisplayList, background: Color)
     for item in list.items() {
         stats.items += 1;
         match *item {
+            DisplayItem::Text {
+                x,
+                y,
+                scale,
+                color,
+                ref run,
+            } => {
+                let Some(clip) = clip else { continue };
+                let size = run.size * scale;
+                for g in run.glyphs.iter() {
+                    let Some(bitmap) = glyphs.rasterize(run.font, g.id, size) else {
+                        continue;
+                    };
+                    // Glyph origins snap to whole pixels (no subpixel positioning).
+                    let ox = (x + g.x * scale).round() as i32 + bitmap.left;
+                    let oy = (y + g.y * scale).round() as i32 + bitmap.top;
+                    stats.pixels_written += canvas.blend_coverage(ox, oy, &bitmap, color, clip);
+                }
+            }
             DisplayItem::SolidRect { rect, color } => {
                 if let Some(target) = clip.and_then(|c| c.intersect(rect)) {
                     stats.pixels_written += canvas.fill(target, color);
@@ -112,7 +137,12 @@ mod tests {
 
     fn render(width: u32, height: u32, list: &DisplayList) -> (Framebuffer, RasterStats) {
         let mut fb = Framebuffer::new(width, height).unwrap();
-        let stats = rasterize(&mut fb.canvas(), list, Color::WHITE);
+        let stats = rasterize(
+            &mut fb.canvas(),
+            list,
+            Color::WHITE,
+            &mut rustlite_paint::NoGlyphs,
+        );
         (fb, stats)
     }
 
@@ -180,6 +210,96 @@ mod tests {
         list.push_clip(Rect::new(0, 0, 1, 1));
         let (_, stats) = render(2, 2, &list);
         assert_eq!(stats.unbalanced_clips, 2);
+    }
+
+    /// Rasterizer that returns a solid 2×3 block for every glyph.
+    struct BlockGlyphs;
+
+    impl GlyphRasterizer for BlockGlyphs {
+        fn rasterize(
+            &mut self,
+            _: rustlite_paint::FontId,
+            _: u16,
+            _: f32,
+        ) -> Option<std::rc::Rc<rustlite_paint::GlyphBitmap>> {
+            Some(std::rc::Rc::new(rustlite_paint::GlyphBitmap {
+                width: 2,
+                height: 3,
+                left: 0,
+                top: -3,
+                coverage: vec![255; 6],
+            }))
+        }
+    }
+
+    #[test]
+    fn text_blends_glyph_coverage_at_baseline() {
+        use rustlite_paint::{FontId, GlyphRun, PositionedGlyph};
+        let mut list = DisplayList::new();
+        list.push(DisplayItem::Text {
+            x: 1.0,
+            y: 4.0,
+            scale: 1.0,
+            color: Color::BLACK,
+            run: GlyphRun {
+                font: FontId(0),
+                size: 10.0,
+                glyphs: vec![
+                    PositionedGlyph {
+                        id: 1,
+                        x: 0.0,
+                        y: 0.0,
+                    },
+                    PositionedGlyph {
+                        id: 2,
+                        x: 3.0,
+                        y: 0.0,
+                    },
+                ]
+                .into(),
+            },
+        });
+        let mut fb = Framebuffer::new(8, 6).unwrap();
+        let stats = rasterize(&mut fb.canvas(), &list, Color::WHITE, &mut BlockGlyphs);
+        // Glyph 1 covers x 1..3, y 1..4; glyph 2 covers x 4..6.
+        assert_eq!(fb.pixel(1, 1), Some(Color::BLACK));
+        assert_eq!(fb.pixel(2, 3), Some(Color::BLACK));
+        assert_eq!(fb.pixel(3, 2), Some(Color::WHITE));
+        assert_eq!(fb.pixel(5, 2), Some(Color::BLACK));
+        assert_eq!(
+            fb.pixel(1, 4),
+            Some(Color::WHITE),
+            "nothing below the baseline"
+        );
+        assert_eq!(stats.pixels_written, 48 + 12);
+    }
+
+    #[test]
+    fn text_respects_clip() {
+        use rustlite_paint::{FontId, GlyphRun, PositionedGlyph};
+        let mut list = DisplayList::new();
+        list.push_clip(Rect::new(0, 0, 2, 6));
+        list.push(DisplayItem::Text {
+            x: 1.0,
+            y: 4.0,
+            scale: 1.0,
+            color: Color::BLACK,
+            run: GlyphRun {
+                font: FontId(0),
+                size: 10.0,
+                glyphs: vec![PositionedGlyph {
+                    id: 1,
+                    x: 0.0,
+                    y: 0.0,
+                }]
+                .into(),
+            },
+        });
+        list.pop_clip();
+        let mut fb = Framebuffer::new(8, 6).unwrap();
+        rasterize(&mut fb.canvas(), &list, Color::WHITE, &mut BlockGlyphs);
+        assert_eq!(fb.pixel(1, 2), Some(Color::BLACK));
+        assert_eq!(fb.pixel(2, 2), Some(Color::WHITE), "clipped");
     }
 
     #[test]

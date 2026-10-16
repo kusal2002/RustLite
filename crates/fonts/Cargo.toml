@@ -1,0 +1,18 @@
+[package]
+name = "rustlite-fonts"
+description = "Font discovery, selection, fallback, shaping, metrics and glyph rasterization for RustLite."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+fontdb.workspace = true
+fontdue.workspace = true
+rustlite-paint.workspace = true
+rustybuzz.workspace = true
+tracing.workspace = true
+ttf-parser.workspace = true
+
+[lints]
+workspace = true

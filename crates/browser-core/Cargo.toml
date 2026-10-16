@@ -8,7 +8,9 @@ publish.workspace = true
 
 [dependencies]
 rustlite-dom.workspace = true
+rustlite-fonts.workspace = true
 rustlite-html.workspace = true
+rustlite-layout.workspace = true
 rustlite-paint.workspace = true
 rustlite-style.workspace = true
 tracing.workspace = true

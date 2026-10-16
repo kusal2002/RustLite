@@ -6,7 +6,9 @@ members = [
     "crates/css",
     "crates/diagnostics",
     "crates/dom",
+    "crates/fonts",
     "crates/html",
+    "crates/layout",
     "crates/paint",
     "crates/renderer",
     "crates/style",
@@ -24,12 +26,18 @@ rustlite-browser-core = { path = "crates/browser-core" }
 rustlite-css = { path = "crates/css" }
 rustlite-diagnostics = { path = "crates/diagnostics" }
 rustlite-dom = { path = "crates/dom" }
+rustlite-fonts = { path = "crates/fonts" }
 rustlite-html = { path = "crates/html" }
+rustlite-layout = { path = "crates/layout" }
 rustlite-paint = { path = "crates/paint" }
 rustlite-renderer = { path = "crates/renderer" }
 rustlite-style = { path = "crates/style" }
 
 # External crates (see docs/architecture.md#dependencies for rationale)
+fontdb = "0.24"
+fontdue = "0.9.4"
+rustybuzz = "0.20.1"
+ttf-parser = "0.25.1"
 softbuffer = { version = "0.4.8", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
 thiserror = "2.0"
 tracing = "0.1.44"

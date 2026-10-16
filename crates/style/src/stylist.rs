@@ -179,6 +179,11 @@ impl ComputedStyles {
     pub fn get(&self, node: NodeId) -> Option<&ComputedStyle> {
         self.styles.get(node.index())?.as_deref()
     }
+
+    /// Shared handle to an element's style, for structures that outlive a borrow.
+    pub fn get_rc(&self, node: NodeId) -> Option<Rc<ComputedStyle>> {
+        self.styles.get(node.index())?.clone()
+    }
 }
 
 /// Counters from one style computation.

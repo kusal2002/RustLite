@@ -1,4 +1,4 @@
-use rustlite_paint::{Color, Rect, Size};
+use rustlite_paint::{Color, GlyphBitmap, Rect, Size};
 
 /// Errors constructing a canvas or framebuffer.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -106,6 +106,51 @@ impl<'a> Canvas<'a> {
             }
         }
         (w * h) as u64
+    }
+
+    /// Blends `color` through a coverage mask whose top-left corner is at
+    /// (`x`, `y`), restricted to `clip`. Returns the number of pixels touched.
+    pub fn blend_coverage(
+        &mut self,
+        x: i32,
+        y: i32,
+        mask: &GlyphBitmap,
+        color: Color,
+        clip: Rect,
+    ) -> u64 {
+        let mask_rect = Rect::new(x, y, mask.width, mask.height);
+        let Some(area) = self
+            .bounds()
+            .intersect(clip)
+            .and_then(|c| c.intersect(mask_rect))
+        else {
+            return 0;
+        };
+        let stride = self.width as usize;
+        let mut touched = 0;
+        // `area` is inside both the canvas and the mask, so all indices are in range.
+        for row in 0..area.height as usize {
+            let cy = area.y as usize + row;
+            let my = (area.y - y) as usize + row;
+            for col in 0..area.width as usize {
+                let cx = area.x as usize + col;
+                let mx = (area.x - x) as usize + col;
+                let coverage = u32::from(mask.coverage[my * mask.width as usize + mx]);
+                let alpha = coverage * u32::from(color.a) / 255;
+                if alpha == 0 {
+                    continue;
+                }
+                let inv = 255 - alpha;
+                let px = &mut self.pixels[cy * stride + cx];
+                let d = *px;
+                let r = (u32::from(color.r) * alpha + ((d >> 16) & 0xFF) * inv + 127) / 255;
+                let g = (u32::from(color.g) * alpha + ((d >> 8) & 0xFF) * inv + 127) / 255;
+                let b = (u32::from(color.b) * alpha + (d & 0xFF) * inv + 127) / 255;
+                *px = (r << 16) | (g << 8) | b;
+                touched += 1;
+            }
+        }
+        touched
     }
 }
 

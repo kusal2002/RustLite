@@ -86,7 +86,8 @@ impl ComputedStyle {
             height: ComputedLengthAuto::Auto,
             margin: [ComputedLengthAuto::Length(zero); 4],
             padding: [zero; 4],
-            border_width: [3.0; 4],
+            // Computed value: `medium` (3px) becomes 0 with the initial `border-style: none`.
+            border_width: [0.0; 4],
             border_style: [BorderStyle::None; 4],
             border_color: [Rgba::BLACK; 4],
         }

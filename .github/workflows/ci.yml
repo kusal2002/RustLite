@@ -27,7 +27,7 @@ jobs:
       - run: cargo test --workspace
       - run: cargo build --release --workspace
       - name: Headless render
-        run: cargo run --release -- --size 800x600 --headless frame.png
+        run: cargo run --release -- --size 800x600 --headless frame.png tests/pages/sample.html
       - uses: actions/upload-artifact@v4
         with:
           name: frame-${{ matrix.os }}

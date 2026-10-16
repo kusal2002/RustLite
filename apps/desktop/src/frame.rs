@@ -74,7 +74,12 @@ mod tests {
         let mut list = DisplayList::new();
         compose(&mut list, window, &toolbar, &mut page, chrome);
         let mut fb = Framebuffer::new(window.width, window.height).unwrap();
-        let stats = rasterize(&mut fb.canvas(), &list, WINDOW_BACKGROUND);
+        let stats = rasterize(
+            &mut fb.canvas(),
+            &list,
+            WINDOW_BACKGROUND,
+            &mut rustlite_paint::NoGlyphs,
+        );
         assert_eq!(stats.unbalanced_clips, 0);
         (fb, toolbar, page)
     }

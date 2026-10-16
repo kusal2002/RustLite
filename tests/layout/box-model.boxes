@@ -1,0 +1,16 @@
+<html> 0 0 800 285
+<head> 0 0 0 0
+<style> 0 0 0 0
+<body> 0 0 800 285
+<div#plain> 0 0 800 20
+<div#padded> 0 20 800 35
+<div#bordered> 0 55 800 26
+<div#fixed> 0 81 200 20
+<div#centered> 250 101 300 20
+<div#right> 700 121 100 20
+<div#pct> 80 141 400 20
+<div#overconstrained> 50 161 300 20
+<div#all> 30 187 132 32
+<div#outer> 0 225 420 60
+<div#inner> 110 235 200 20
+<div#inner2> 10 255 400 20

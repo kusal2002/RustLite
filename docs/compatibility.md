@@ -12,7 +12,7 @@
 | Font discovery | Not implemented | Not implemented | Not implemented |
 | Certificate store | Not implemented (planned rustls + platform verifier) | Same | Same |
 | Shortcut modifier | Ctrl | Ctrl | Cmd |
-| Validation | ✅ build, tests, window | ❌ unverified (CI defined) | ❌ unverified (CI defined) |
+| Validation | ✅ build, tests, window | ✅ build + tests in CI (no window) | ✅ build + tests in CI after `ed08a83` fix (no window) |
 
 ## Web platform
 
@@ -95,4 +95,40 @@ Not supported yet:
 | Default font family | `"Times New Roman"` (`Times` on macOS; Linux/macOS not observed) |
 | Positioned/floated blockification | Only the root element is blockified |
 
-Layout, text, networking and JavaScript are not implemented yet.
+### Layout (LAYOUT-001) — Tested, verified on reference browser
+
+Evidence: [LAYOUT-001](../research/specifications/LAYOUT-001.md),
+`crates/layout/tests/golden.rs` (9/9 fixtures; max 0.032px from Chromium 152).
+
+Supported: block boxes and anonymous block boxes, `display: none`/`contents`;
+CSS 2.1 width resolution with `auto` margins and percentages; `height` px/%/auto;
+vertical margin collapsing (siblings, parent/child, through empty boxes,
+negative margins; stopped by borders, padding and BFC roots); inline formatting
+with `white-space: normal` collapsing across elements, greedy line breaking at
+spaces, `<br>`, line boxes with half-leading and baseline alignment (Blink's
+rounding), `text-align` left/right/center/start/end; overflow clipping when
+painting; canvas background propagation from `html`/`body`; device pixel ratio.
+
+| Area | Behavior today |
+|---|---|
+| Floats, `position`, flex, grid, tables | Laid out as ordinary blocks |
+| `inline-block`, replaced elements (`img`, form controls) | Treated as inline containers; images not loaded |
+| List markers | Not generated |
+| `white-space` other than `normal`, CJK/hyphen/UAX #14 break opportunities | Not supported (breaks only at spaces) |
+| Bidi, vertical text, `vertical-align` | Not supported |
+| Inline padding/borders/margins/backgrounds | Ignored |
+| `min-*`/`max-*` sizes, `box-sizing` | Not supported (content-box) |
+| Border styles other than solid | Painted solid |
+| Scrollbars | None drawn; the page scrolls with wheel/keys |
+| Nesting deeper than 200 block levels | Flattened into inline content (stack safety) |
+
+### Fonts and text (FONT-001)
+
+System fonts via fontdb on all platforms; generic families map to the first
+installed of a per-platform list (e.g. serif → Times New Roman / Times /
+Liberation Serif / DejaVu Serif); per-character fallback keeps combining marks
+and Sinhala signs with their base; shaping with rustybuzz (kerning, ligatures);
+grayscale glyph rasterization without hinting (text looks softer than
+Chromium's). No `@font-face`, no color emoji tables.
+
+Networking and JavaScript are not implemented yet.
