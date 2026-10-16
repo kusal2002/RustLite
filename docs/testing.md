@@ -55,8 +55,11 @@ Open `http://127.0.0.1:8765/html`, `/style` and `/layout` in the
 reference browser. `/layout` renders `tests/layout/*.html` in an 800×600
 `srcdoc` iframe and writes `*.boxes` from `getBoundingClientRect`. Layout
 fixtures declare `<!-- tolerance: px -->` and, if they contain text,
-`<!-- fonts: Family -->`; they are skipped with a note when the font is missing
-(e.g. Times New Roman on Linux CI). `/html` parses every `tests/html/*.html` with `DOMParser`
+`<!-- fonts: Family; ascent descent gap -->` (rounded 16px metrics of the observed
+font); they are skipped with a note when no installed font of that family has
+those metrics
+(Linux CI has no Times New Roman; macOS has one with different vertical
+metrics). `/html` parses every `tests/html/*.html` with `DOMParser`
 and writes `*.tree`; `/style` renders every `tests/style/*.html` in an
 800×600 `srcdoc` iframe and writes `*.styles` from `getComputedStyle`. Each
 writes `oracle.txt` (user agent, device pixel ratio, document modes).

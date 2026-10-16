@@ -53,6 +53,9 @@
   other than `normal`, break opportunities other than spaces (CJK, hyphens,
   UAX #14), bidi, inline padding/borders/margins, `vertical-align`, min/max sizes.
 - Fonts other than Times New Roman; macOS/Linux font metrics (not observed).
+  CI showed macOS's Times New Roman has identical advances but different
+  vertical metrics (16px lines instead of 18px), so text fixtures now declare
+  the observed font's 16px metrics (`14 3 1`) and skip when they differ.
 
 ## Implementation status
 

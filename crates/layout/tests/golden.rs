@@ -5,13 +5,16 @@
 //!
 //! Fixture headers:
 //! - `<!-- tolerance: N -->` — maximum allowed difference per coordinate (px).
-//! - `<!-- fonts: Family -->` — the fixture needs this font installed (it was
-//!   observed with it). Without it the fixture is skipped, with a note.
+//! - `<!-- fonts: Family; A D G -->` — the fixture was observed with this font,
+//!   whose ascent, descent and line gap at 16px (rounded) were A, D and G. It is
+//!   skipped, with a note, unless an installed font of that family has the same
+//!   metrics: same-named fonts differ between platforms (macOS's Times New Roman
+//!   has the same advances as Windows' but different vertical metrics).
 
 use std::fs;
 use std::path::PathBuf;
 
-use rustlite_fonts::FontContext;
+use rustlite_fonts::{Family, FontContext};
 use rustlite_layout::{dump_geometry, layout_document};
 
 /// Fixtures where RustLite intentionally differs from the reference browser,
@@ -27,6 +30,34 @@ fn header<'a>(source: &'a str, key: &str) -> Option<&'a str> {
     let start = source.find(&marker)? + marker.len();
     let end = source[start..].find("-->")? + start;
     Some(source[start..end].trim())
+}
+
+/// Checks that the installed font matches the one the fixture was observed with.
+fn check_font(fonts: &mut FontContext, spec: &str) -> Result<(), String> {
+    let (family, expected) = spec
+        .split_once(';')
+        .ok_or_else(|| format!("malformed fonts header `{spec}`"))?;
+    let family = family.trim();
+    if !fonts.has_family(family) {
+        return Err(format!("font `{family}` is not installed"));
+    }
+    let font = fonts
+        .select(&[Family::Named(family)], 400, false)
+        .ok_or_else(|| format!("font `{family}` cannot be loaded"))?;
+    let m = fonts.metrics(font, 16.0);
+    let actual = format!(
+        "{} {} {}",
+        m.ascent.round(),
+        m.descent.round(),
+        m.line_gap.round()
+    );
+    if actual != expected.trim() {
+        return Err(format!(
+            "installed `{family}` has 16px metrics {actual}, the reference machine's had {}",
+            expected.trim()
+        ));
+    }
+    Ok(())
 }
 
 /// Compares two geometry dumps; returns human-readable differences.
@@ -84,10 +115,10 @@ fn layout_golden_fixtures_match_reference_browser() {
     for path in &entries {
         let name = path.file_stem().unwrap().to_str().unwrap().to_owned();
         let source = fs::read_to_string(path).unwrap();
-        if let Some(family) = header(&source, "fonts")
-            && !fonts.has_family(family)
+        if let Some(spec) = header(&source, "fonts")
+            && let Err(reason) = check_font(&mut fonts, spec)
         {
-            eprintln!("note: skipping {name}: font `{family}` is not installed");
+            eprintln!("note: skipping {name}: {reason}");
             continue;
         }
         let tolerance: f32 = header(&source, "tolerance")

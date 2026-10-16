@@ -39,7 +39,7 @@ Tested · Verified on reference browser · Blocked · Deferred.
 |---|---|---|---|---|
 | Windows 11 x64 (MSVC) | ✅ | ✅ 165/165 | ✅ | Ryzen 5 5600G, Radeon iGPU |
 | Linux x64 | ✅ CI | ✅ CI | Unverified | CI (ubuntu-latest) green for Phases 1–3; no display in CI |
-| macOS | ✅ CI | ✅ CI (after `ed08a83`) | Unverified | CI (macos-latest) failed Phase 3 on a Windows-specific golden value; fixed in `ed08a83` (not yet re-run) |
+| macOS | ✅ CI | Pending re-run | Unverified | Style golden fixed in `ed08a83` (passed in run 38863957147); layout text goldens failed there because macOS's Times New Roman has different vertical metrics, now skipped by a metrics check |
 
 ## Known limitations
 
