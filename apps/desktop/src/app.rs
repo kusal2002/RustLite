@@ -5,7 +5,7 @@ use std::io::{BufWriter, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use rustlite_browser_core::Page;
+use rustlite_browser_core::{Content, Page};
 use rustlite_diagnostics::{FrameStats, FrameSummary};
 use rustlite_paint::DisplayList;
 use rustlite_renderer::{CanvasError, Framebuffer, PngError, encode_png, rasterize};
@@ -27,6 +27,14 @@ pub enum AppError {
     Window(#[from] WindowError),
     #[error("cannot allocate framebuffer")]
     Framebuffer(#[from] CanvasError),
+    #[error("cannot read {path}")]
+    Input {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("{path} is {size} bytes; the limit is {limit} bytes")]
+    InputTooLarge { path: String, size: u64, limit: u64 },
     #[error("cannot write {path}")]
     Output {
         path: String,
@@ -168,4 +176,35 @@ pub fn render_headless(options: &Options, path: &Path) -> Result<HeadlessReport,
 
 fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
+}
+
+/// Largest local HTML file `--dump-dom` will read.
+const MAX_DUMP_INPUT: u64 = 64 * 1024 * 1024;
+
+/// Parses a local HTML file (named explicitly on the command line) and returns
+/// its DOM in html5lib tree format.
+pub fn dump_dom(path: &Path) -> Result<String, AppError> {
+    let display = path.display().to_string();
+    let input_error = |source| AppError::Input {
+        path: display.clone(),
+        source,
+    };
+    let size = std::fs::metadata(path).map_err(input_error)?.len();
+    if size > MAX_DUMP_INPUT {
+        return Err(AppError::InputTooLarge {
+            path: display,
+            size,
+            limit: MAX_DUMP_INPUT,
+        });
+    }
+    let bytes = std::fs::read(path).map_err(input_error)?;
+    // Encoding sniffing arrives with networking; until then input is UTF-8,
+    // with invalid sequences replaced (as a UTF-8 decoder in a browser would).
+    let source = String::from_utf8_lossy(&bytes);
+    let mut page = Page::new(rustlite_paint::Size::new(0, 0));
+    page.load_html(format!("file:{display}"), &source);
+    let Content::Html(doc) = page.content() else {
+        unreachable!("load_html always produces HTML content")
+    };
+    Ok(rustlite_dom::dump_tree(&doc.dom, doc.dom.root()))
 }

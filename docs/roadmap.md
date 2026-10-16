@@ -7,8 +7,8 @@ acceptance criteria pass; see [progress.md](progress.md) for live status.
 |---|---|---|---|
 | 0 | Repo, tooling, docs, REA readiness | Builds, or blockers documented | **Done** (2026-10-16) |
 | 1 | Window, input, resize, logging, basic drawing | Window shows a basic scene on every available platform | **Done on Windows**; Linux/macOS unverified (CI configured, not yet run) |
-| 2 | HTML tokenizer, tree builder, DOM | Representative fixtures → deterministic DOM trees | Next |
-| 3 | CSS parser, selectors, cascade, computed style, UA stylesheet | Fixtures → expected computed styles | Planned |
+| 2 | HTML tokenizer, tree builder, DOM | Representative fixtures → deterministic DOM trees | **Done** (2026-10-16): 32/32 fixtures match Chromium |
+| 3 | CSS parser, selectors, cascade, computed style, UA stylesheet | Fixtures → expected computed styles | Next |
 | 4 | Block/inline layout, text measurement, line breaking, scrolling | Simple pages' geometry within tolerance | Planned |
 | 5 | Display lists for text/images, clipping, GPU presentation | Renders a simple HTML page without another engine | Planned |
 | 6 | HTTP(S), URL resolution, redirects, errors | Loads local test server + selected pages | Planned |
@@ -17,18 +17,18 @@ acceptance criteria pass; see [progress.md](progress.md) for live status.
 | 9 | JS runtime (Boa evaluation), first DOM APIs | Simple interactive pages | Planned |
 | 10 | Advanced CSS, Web APIs, isolation, security | Every claim tested + documented | Planned |
 
-## Next milestone: Phase 2, step 1
+## Next milestone: Phase 3, CSS (first layer)
 
-1. Add `crates/dom`: arena storage with compact `NodeId(u32)`, document /
-   element / text / comment / doctype nodes, attributes, parent/child/sibling
-   links, append/insert/remove with detached-node safety, debug-tree dump.
-2. Add `crates/html`: tokenizer state machine (data, tag open, tag name,
-   attribute states, comment, doctype, RCDATA/RAWTEXT for `title`/`style`/`script`),
-   named + numeric character references (initial subset, documented).
-3. Tree builder: insertion modes `initial` → `in body` subset, implied
-   `html/head/body`, void elements, `p` auto-closing, basic misnested-formatting
-   recovery; documented unsupported rules.
-4. Golden tests in `tests/html/` (input `.html` → expected tree `.txt`),
-   comparing against Chrome via REA `inspect-web-page` for a small seed set.
-5. `browser-core` gains `Document::Html(dom)` for `--file`-free built-in
-   fixtures (no networking yet).
+1. `crates/css`: CSS Syntax Level 3 tokenizer (idents, strings, numbers,
+   dimensions, percentages, hashes, functions, at-keywords, comments, error
+   tokens) and a stylesheet parser (qualified rules, declarations, `!important`,
+   at-rule skipping with error recovery).
+2. Selectors: type, universal, class, ID, descendant and child combinators,
+   selector lists, specificity.
+3. `crates/style`: user-agent stylesheet (display, margins, headings, lists,
+   `display:none` for `head` etc.), cascade by origin/importance/specificity/order,
+   inheritance, and computed values for display, width/height, margin/padding,
+   border, color, background-color, font-size/family/weight, text-align, overflow.
+4. Collect `<style>` elements and `style=""` attributes from the DOM.
+5. Golden tests: fixtures → computed styles compared against Chromium
+   `getComputedStyle` via the same oracle approach as HTML-001.

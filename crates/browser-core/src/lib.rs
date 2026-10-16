@@ -1,32 +1,45 @@
 //! Coordinates the page pipeline: document → (style → layout →) display list.
 //!
-//! Phase 1 scope: the only document is `about:blank`. The HTML, CSS, style and
-//! layout stages slot in between the document and the display list in later
-//! phases (see `docs/roadmap.md`). What exists today is the part every later
-//! phase depends on: a viewport, and a cached display list that is rebuilt only
-//! when something invalidates it.
+//! Current scope (Phase 2): a page shows either `about:blank` or an HTML
+//! document parsed by `rustlite-html`. Style and layout do not exist yet
+//! (Phases 3–4), so an HTML document is parsed into a DOM but still paints as
+//! an empty white canvas. What is in place is everything later phases hang
+//! off: the document, a viewport, and a cached display list that is rebuilt
+//! only when something invalidates it.
 
+use rustlite_dom::Document;
 use rustlite_paint::{Color, DisplayList, Rect, Size};
 
-/// The document currently shown in a page.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Document {
-    /// `about:blank`: an empty document with the initial white canvas.
-    Blank,
+/// A parsed HTML document and where it came from.
+#[derive(Debug)]
+pub struct HtmlDocument {
+    pub url: String,
+    pub dom: Document,
+    /// Number of HTML parse errors (repairs) encountered.
+    pub parse_errors: usize,
 }
 
-impl Document {
+/// What a page currently shows.
+#[derive(Debug)]
+pub enum Content {
+    /// `about:blank`: an empty document with the initial white canvas.
+    Blank,
+    Html(Box<HtmlDocument>),
+}
+
+impl Content {
     pub fn url(&self) -> &str {
         match self {
-            Document::Blank => "about:blank",
+            Content::Blank => "about:blank",
+            Content::Html(doc) => &doc.url,
         }
     }
 }
 
-/// One page: a document plus the viewport it is laid out against.
+/// One page: content plus the viewport it is laid out against.
 #[derive(Debug)]
 pub struct Page {
-    document: Document,
+    content: Content,
     viewport: Size,
     display_list: DisplayList,
     paint_dirty: bool,
@@ -36,7 +49,7 @@ pub struct Page {
 impl Page {
     pub fn new(viewport: Size) -> Self {
         Self {
-            document: Document::Blank,
+            content: Content::Blank,
             viewport,
             display_list: DisplayList::new(),
             paint_dirty: true,
@@ -44,8 +57,50 @@ impl Page {
         }
     }
 
-    pub fn document(&self) -> &Document {
-        &self.document
+    pub fn content(&self) -> &Content {
+        &self.content
+    }
+
+    pub fn url(&self) -> &str {
+        self.content.url()
+    }
+
+    /// Replaces the page content with `source` parsed as HTML.
+    pub fn load_html(&mut self, url: impl Into<String>, source: &str) {
+        let url = url.into();
+        let start = std::time::Instant::now();
+        let out = rustlite_html::parse_document(source);
+        tracing::info!(
+            %url,
+            bytes = source.len(),
+            nodes = out.document.node_count(),
+            parse_errors = out.error_count,
+            parse_ms = start.elapsed().as_secs_f64() * 1000.0,
+            "HTML document parsed"
+        );
+        self.content = Content::Html(Box::new(HtmlDocument {
+            url,
+            dom: out.document,
+            parse_errors: out.error_count,
+        }));
+        self.paint_dirty = true;
+    }
+
+    /// The document title per HTML §4.2.2: the first `<title>` element's text
+    /// with ASCII whitespace stripped and collapsed. `None` if there is none.
+    pub fn title(&self) -> Option<String> {
+        let Content::Html(doc) = &self.content else {
+            return None;
+        };
+        let dom = &doc.dom;
+        let title = dom.find_element(dom.root(), "title")?;
+        let text = dom.text_content(title);
+        Some(
+            text.split(|c: char| c.is_ascii_whitespace())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" "),
+        )
     }
 
     pub fn viewport(&self) -> Size {
@@ -75,12 +130,10 @@ impl Page {
     pub fn display_list(&mut self) -> &DisplayList {
         if self.paint_dirty {
             self.display_list.clear();
-            match self.document {
-                Document::Blank => {
-                    self.display_list
-                        .fill_rect(Rect::from_size(self.viewport), Color::WHITE);
-                }
-            }
+            // Both kinds of content paint the initial canvas; HTML content
+            // itself is painted once style and layout exist.
+            self.display_list
+                .fill_rect(Rect::from_size(self.viewport), Color::WHITE);
             self.paint_dirty = false;
             self.paint_count += 1;
         }
@@ -95,7 +148,7 @@ mod tests {
     #[test]
     fn blank_page_paints_viewport_white() {
         let mut page = Page::new(Size::new(800, 600));
-        assert_eq!(page.document().url(), "about:blank");
+        assert_eq!(page.url(), "about:blank");
         let list = page.display_list();
         assert_eq!(
             list.items(),
@@ -126,5 +179,27 @@ mod tests {
     fn zero_viewport_paints_nothing() {
         let mut page = Page::new(Size::new(0, 0));
         assert!(page.display_list().is_empty());
+    }
+
+    #[test]
+    fn loading_html_replaces_content_and_invalidates() {
+        let mut page = Page::new(Size::new(10, 10));
+        page.display_list();
+        page.load_html("test:doc", "<title>  Hello \n  world </title><p>x");
+        assert!(page.needs_paint());
+        assert_eq!(page.url(), "test:doc");
+        assert_eq!(page.title().as_deref(), Some("Hello world"));
+        let Content::Html(doc) = page.content() else {
+            panic!("expected HTML content")
+        };
+        assert!(doc.dom.find_element(doc.dom.root(), "p").is_some());
+    }
+
+    #[test]
+    fn missing_title_is_none() {
+        let mut page = Page::new(Size::new(10, 10));
+        assert_eq!(page.title(), None);
+        page.load_html("test:doc", "<p>no title");
+        assert_eq!(page.title(), None);
     }
 }

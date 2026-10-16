@@ -1,0 +1,13 @@
+[package]
+name = "rustlite-dom"
+description = "Arena-based DOM tree for RustLite."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

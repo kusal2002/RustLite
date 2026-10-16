@@ -1141,6 +1141,8 @@ dependencies = [
 name = "rustlite-browser-core"
 version = "0.1.0"
 dependencies = [
+ "rustlite-dom",
+ "rustlite-html",
  "rustlite-paint",
  "tracing",
 ]
@@ -1151,6 +1153,7 @@ version = "0.1.0"
 dependencies = [
  "rustlite-browser-core",
  "rustlite-diagnostics",
+ "rustlite-dom",
  "rustlite-paint",
  "rustlite-renderer",
  "softbuffer",
@@ -1166,6 +1169,20 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "rustlite-dom"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "rustlite-html"
+version = "0.1.0"
+dependencies = [
+ "rustlite-dom",
 ]
 
 [[package]]

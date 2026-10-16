@@ -1,0 +1,7 @@
+| <html>
+|   <head>
+|   <frameset>
+|     <frame>
+|       src="a"
+|     <noframes>
+|       "x"

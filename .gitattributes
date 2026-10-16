@@ -1,0 +1,3 @@
+# Keep byte-exact line endings everywhere (fixtures are parser input).
+* text=auto eol=lf
+*.png binary

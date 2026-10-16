@@ -18,8 +18,10 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | CORE-001 | Page with cached display list + invalidation | Tested | `browser-core` tests |
 | DIAG-001 | Structured logging (`RUST_LOG`) | Implemented | Manual run |
 | DIAG-002 | Frame-time stats (min/mean/p95/max) | Tested | `frame_stats` tests |
-| HTML-001 | HTML tokenizer | Planned | — |
-| DOM-001 | Arena DOM | Planned | — |
+| HTML-001 | HTML tokenizer + tree builder | Verified on reference browser (fixture set) | 32/32 golden trees match Chromium 152 `DOMParser`; [spec](../research/specifications/HTML-001.md) |
+| DOM-001 | Arena DOM | Tested | `rustlite-dom` tests (incl. 200k-deep traversal) |
+| CORE-002 | Page loads parsed HTML; document title | Tested | `browser-core` tests (content not painted until Phase 3–4) |
+| DIAG-003 | `--dump-dom` CLI (html5lib tree format) | Tested | `apps/desktop/tests/smoke.rs` |
 | CSS-001 | CSS parser | Planned | — |
 | TEXT-001 | Text shaping/rendering | Planned | — |
 | NET-001 | HTTP(S) loading | Planned | — |
@@ -30,13 +32,14 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 | Platform | Build | Tests | Window | Notes |
 |---|---|---|---|---|
-| Windows 11 x64 (MSVC) | ✅ | ✅ 47/47 | ✅ | Ryzen 5 5600G, Radeon iGPU |
+| Windows 11 x64 (MSVC) | ✅ | ✅ 84/84 | ✅ | Ryzen 5 5600G, Radeon iGPU |
 | Linux x64 | Unverified | Unverified | Unverified | CI job defined in `.github/workflows/ci.yml`, not yet run |
 | macOS | Unverified | Unverified | Unverified | CI job defined, not yet run |
 
 ## Known limitations
 
-- Only `about:blank` exists; no HTML/CSS/layout yet.
+- HTML is parsed into a DOM but not rendered (no CSS/style/layout yet).
+- HTML parser deviations are listed in [compatibility.md](compatibility.md#html-parsing-html-001--tested-verified-on-reference-browser).
 - Toolbar has no text (no font stack yet); buttons only log clicks.
 - No vsync/frame pacing (softbuffer on Windows presents immediately).
 - Window path has no automated test that runs without a display.
@@ -54,3 +57,19 @@ Tested · Verified on reference browser · Blocked · Deferred.
   `cargo test --workspace` ✅ 47 passed · `cargo build --release` ✅.
 - **Measurements:** see [performance.md](performance.md).
 - **Next:** Phase 2 (DOM + HTML tokenizer), see [roadmap.md](roadmap.md).
+
+### 2026-10-16 — Phase 2: HTML parser and DOM
+
+- **What:** `rustlite-dom` (arena DOM), `rustlite-html` (WHATWG tokenizer + tree
+  builder), browser-core `Page::load_html` + `title()`, `--dump-dom` CLI,
+  reference-browser oracle script, 32 golden fixtures.
+- **Why:** First stage of the real pipeline; everything after (style, layout)
+  consumes this DOM.
+- **Fixes along the way:** cycle check in `insert_before` made O(1) for leaf
+  nodes and open-element name counts added to the tree builder; both turned
+  deeply nested markup from quadratic into linear time.
+- **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 84 passed
+  (incl. 32/32 golden fixtures vs Chromium) · release build ✅.
+- **Measurements:** 4.3 MB synthetic page → 540k nodes in ~194 ms (release), see
+  [performance.md](performance.md).
+- **Next:** Phase 3, CSS tokenizer/parser, selectors, cascade.

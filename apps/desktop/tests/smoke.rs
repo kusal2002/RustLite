@@ -46,3 +46,42 @@ fn invalid_option_exits_with_usage_error() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("unknown option"));
 }
+
+#[test]
+fn dump_dom_prints_parsed_tree() {
+    let path = std::env::temp_dir().join(format!("rustlite-smoke-{}.html", std::process::id()));
+    std::fs::write(&path, "<title>T</title><p>a<b>b</p>c").unwrap();
+    let output = rustlite().arg("--dump-dom").arg(&path).output().unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        concat!(
+            "| <html>\n",
+            "|   <head>\n",
+            "|     <title>\n",
+            "|       \"T\"\n",
+            "|   <body>\n",
+            "|     <p>\n",
+            "|       \"a\"\n",
+            "|       <b>\n",
+            "|         \"b\"\n",
+            "|     <b>\n",
+            "|       \"c\"\n",
+        )
+    );
+}
+
+#[test]
+fn dump_dom_reports_missing_file() {
+    let output = rustlite()
+        .args(["--dump-dom", "definitely-missing.html"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot read"));
+}

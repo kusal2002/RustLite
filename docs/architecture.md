@@ -18,8 +18,9 @@ css (tokenizer, parser) ─► style (cascade, computed values)
                                   paint (display list) ─► renderer (raster) ─► platform (present)
 ```
 
-Status today (Phase 1): `browser-core` owns a `Page` whose document is always
-`about:blank`; it produces a display list directly. The desktop shell composes
+Status today (Phase 2): `browser-core` owns a `Page` that is either
+`about:blank` or an HTML document parsed by `rustlite-html` into a
+`rustlite-dom` tree. With no style/layout yet, both paint as a white canvas. The desktop shell composes
 browser chrome + page display list and rasterizes it on the CPU into the
 window's presentation buffer. Every stage between "document" and "display list"
 is still to be built (see [roadmap](roadmap.md)).
@@ -29,25 +30,28 @@ is still to be built (see [roadmap](roadmap.md)).
 | Path | Crate | Responsibility | Status |
 |---|---|---|---|
 | `apps/desktop` | `rustlite-desktop` (bin `rustlite`) | Window, event loop, toolbar, shortcuts, frame composition, headless mode | Implemented |
-| `crates/browser-core` | `rustlite-browser-core` | Page/document lifecycle, viewport, cached display list with invalidation | Implemented (about:blank only) |
+| `crates/browser-core` | `rustlite-browser-core` | Page/document lifecycle, viewport, cached display list with invalidation | Implemented (about:blank + parsed HTML; no rendering of content) |
 | `crates/paint` | `rustlite-paint` | Geometry (`Rect`, `Size`, `Point`), `Color`, `DisplayList` | Implemented |
 | `crates/renderer` | `rustlite-renderer` | CPU rasterizer (fills, borders, clips, alpha), PNG encoder | Implemented |
 | `crates/diagnostics` | `rustlite-diagnostics` | `tracing` setup, frame-time statistics | Implemented |
+| `crates/dom` | `rustlite-dom` | Arena DOM, traversal, mutation, html5lib tree dump | Implemented |
+| `crates/html` | `rustlite-html` | WHATWG tokenizer + tree builder | Implemented (see compatibility.md) |
 
 Planned crates are created when their first real code lands, not as empty
-shells: `html`, `dom`, `css`, `style`, `layout`, `fonts`, `net`, `platform`,
+shells: `css`, `style`, `layout`, `fonts`, `net`, `platform`,
 `js-runtime`, `web-apis`, `storage`. Their responsibilities follow the master
 specification §3.
 
 ### Dependency direction
 
 ```
-desktop ─► browser-core ─► paint
+desktop ─► browser-core ─► html ─► dom
+   │            └─────────► paint
    │  └──► renderer ─────► paint
    └─────► diagnostics
 ```
 
-Lower layers never depend on higher ones. `paint` has no dependencies at all;
+Lower layers never depend on higher ones. `paint` and `dom` have no internal dependencies;
 `renderer` knows nothing about documents; `browser-core` knows nothing about
 windows.
 

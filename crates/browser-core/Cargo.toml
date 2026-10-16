@@ -7,6 +7,8 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+rustlite-dom.workspace = true
+rustlite-html.workspace = true
 rustlite-paint.workspace = true
 tracing.workspace = true
 

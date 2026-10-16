@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 rustlite-browser-core.workspace = true
 rustlite-diagnostics.workspace = true
+rustlite-dom.workspace = true
 rustlite-paint.workspace = true
 rustlite-renderer.workspace = true
 softbuffer.workspace = true

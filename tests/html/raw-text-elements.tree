@@ -1,0 +1,14 @@
+| <html>
+|   <head>
+|     <title>
+|       "a<b>&"
+|     <style>
+|       "p{}</b>"
+|     <script>
+|       "if(a<b){}"
+|   <body>
+|     <textarea>
+|       "line<b>"
+|     <pre>
+|       "
+x"

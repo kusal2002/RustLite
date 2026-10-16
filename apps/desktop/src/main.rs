@@ -24,9 +24,12 @@ fn main() -> ExitCode {
         "RustLite starting"
     );
 
-    let result = match &options.headless_output {
-        Some(path) => app::render_headless(&options, path).map(drop),
-        None => app::run(options).map(drop),
+    let result = if let Some(path) = &options.dump_dom {
+        app::dump_dom(path).map(|tree| print!("{tree}"))
+    } else if let Some(path) = &options.headless_output {
+        app::render_headless(&options, path).map(drop)
+    } else {
+        app::run(options).map(drop)
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

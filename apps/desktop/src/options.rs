@@ -11,6 +11,7 @@ Options:
   --size <WxH>              Initial window size in physical pixels (default 1024x768)
   --headless <PNG>          Render one frame without opening a window and write it as PNG
   --exit-after-frames <N>   Close the window after presenting N frames (smoke testing)
+  --dump-dom <HTML_FILE>    Parse a local HTML file and print its DOM tree (html5lib format)
   --debug-overlay           Start with the paint debug overlay enabled
   -h, --help                Print this help
 ";
@@ -19,6 +20,7 @@ Options:
 pub struct Options {
     pub size: Size,
     pub headless_output: Option<PathBuf>,
+    pub dump_dom: Option<PathBuf>,
     pub exit_after_frames: Option<u64>,
     pub debug_overlay: bool,
     pub help: bool,
@@ -29,6 +31,7 @@ impl Default for Options {
         Self {
             size: Size::new(1024, 768),
             headless_output: None,
+            dump_dom: None,
             exit_after_frames: None,
             debug_overlay: false,
             help: false,
@@ -70,6 +73,12 @@ impl Options {
                         .next()
                         .ok_or(OptionsError::MissingValue("--headless"))?;
                     opts.headless_output = Some(PathBuf::from(value));
+                }
+                "--dump-dom" => {
+                    let value = args
+                        .next()
+                        .ok_or(OptionsError::MissingValue("--dump-dom"))?;
+                    opts.dump_dom = Some(PathBuf::from(value));
                 }
                 "--exit-after-frames" => {
                     let value = args

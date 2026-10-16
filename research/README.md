@@ -33,4 +33,4 @@ Review every capture for credentials, tokens and personal data before committing
 ## Index
 
 - [ADR-0001](decisions/ADR-0001-cpu-raster-first.md) — CPU rasterization first, wgpu later.
-- No feature specifications yet (first: HTML-001, Phase 2).
+- [HTML-001](specifications/HTML-001.md) — HTML parsing; 32/32 fixtures match Chromium 152.
