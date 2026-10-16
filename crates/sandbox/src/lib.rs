@@ -58,6 +58,8 @@ impl RendererJob {
     /// Creates the job with a per-process memory limit of `memory_limit`
     /// bytes. On platforms without job objects this succeeds and does nothing.
     pub fn new(memory_limit: usize) -> io::Result<Self> {
+        #[cfg(not(windows))]
+        let _ = memory_limit;
         Ok(Self {
             #[cfg(windows)]
             inner: windows::Job::new(memory_limit)?,
