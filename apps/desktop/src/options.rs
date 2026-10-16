@@ -1,0 +1,172 @@
+//! Command-line options.
+
+use std::path::PathBuf;
+
+use rustlite_paint::Size;
+
+pub const USAGE: &str = "\
+Usage: rustlite [OPTIONS]
+
+Options:
+  --size <WxH>              Initial window size in physical pixels (default 1024x768)
+  --headless <PNG>          Render one frame without opening a window and write it as PNG
+  --exit-after-frames <N>   Close the window after presenting N frames (smoke testing)
+  --debug-overlay           Start with the paint debug overlay enabled
+  -h, --help                Print this help
+";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Options {
+    pub size: Size,
+    pub headless_output: Option<PathBuf>,
+    pub exit_after_frames: Option<u64>,
+    pub debug_overlay: bool,
+    pub help: bool,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            size: Size::new(1024, 768),
+            headless_output: None,
+            exit_after_frames: None,
+            debug_overlay: false,
+            help: false,
+        }
+    }
+}
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum OptionsError {
+    #[error("unknown option `{0}`")]
+    Unknown(String),
+    #[error("option `{0}` requires a value")]
+    MissingValue(&'static str),
+    #[error("invalid value `{value}` for `{option}`: {reason}")]
+    Invalid {
+        option: &'static str,
+        value: String,
+        reason: &'static str,
+    },
+}
+
+/// Maximum accepted dimension; keeps a headless framebuffer under ~256 MiB.
+const MAX_DIMENSION: u32 = 8192;
+
+impl Options {
+    pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Self, OptionsError> {
+        let mut opts = Options::default();
+        let mut args = args.into_iter();
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "-h" | "--help" => opts.help = true,
+                "--debug-overlay" => opts.debug_overlay = true,
+                "--size" => {
+                    let value = args.next().ok_or(OptionsError::MissingValue("--size"))?;
+                    opts.size = parse_size(&value)?;
+                }
+                "--headless" => {
+                    let value = args
+                        .next()
+                        .ok_or(OptionsError::MissingValue("--headless"))?;
+                    opts.headless_output = Some(PathBuf::from(value));
+                }
+                "--exit-after-frames" => {
+                    let value = args
+                        .next()
+                        .ok_or(OptionsError::MissingValue("--exit-after-frames"))?;
+                    let n = value
+                        .parse::<u64>()
+                        .ok()
+                        .filter(|&n| n > 0)
+                        .ok_or_else(|| OptionsError::Invalid {
+                            option: "--exit-after-frames",
+                            value: value.clone(),
+                            reason: "expected a positive integer",
+                        })?;
+                    opts.exit_after_frames = Some(n);
+                }
+                _ => return Err(OptionsError::Unknown(arg)),
+            }
+        }
+        Ok(opts)
+    }
+}
+
+fn parse_size(value: &str) -> Result<Size, OptionsError> {
+    let invalid = |reason| OptionsError::Invalid {
+        option: "--size",
+        value: value.to_owned(),
+        reason,
+    };
+    let (w, h) = value
+        .split_once(['x', 'X'])
+        .ok_or_else(|| invalid("expected WIDTHxHEIGHT"))?;
+    let parse = |s: &str| {
+        s.parse::<u32>()
+            .ok()
+            .filter(|&n| (1..=MAX_DIMENSION).contains(&n))
+            .ok_or_else(|| invalid("dimensions must be between 1 and 8192"))
+    };
+    Ok(Size::new(parse(w)?, parse(h)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Options, OptionsError> {
+        Options::parse(args.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn defaults() {
+        assert_eq!(parse(&[]).unwrap(), Options::default());
+    }
+
+    #[test]
+    fn all_options() {
+        let o = parse(&[
+            "--size",
+            "640x480",
+            "--headless",
+            "out.png",
+            "--exit-after-frames",
+            "3",
+            "--debug-overlay",
+        ])
+        .unwrap();
+        assert_eq!(o.size, Size::new(640, 480));
+        assert_eq!(o.headless_output, Some(PathBuf::from("out.png")));
+        assert_eq!(o.exit_after_frames, Some(3));
+        assert!(o.debug_overlay);
+    }
+
+    #[test]
+    fn rejects_bad_values() {
+        assert!(matches!(
+            parse(&["--size", "0x10"]),
+            Err(OptionsError::Invalid { .. })
+        ));
+        assert!(matches!(
+            parse(&["--size", "99999x10"]),
+            Err(OptionsError::Invalid { .. })
+        ));
+        assert!(matches!(
+            parse(&["--size", "abc"]),
+            Err(OptionsError::Invalid { .. })
+        ));
+        assert!(matches!(
+            parse(&["--exit-after-frames", "0"]),
+            Err(OptionsError::Invalid { .. })
+        ));
+        assert_eq!(
+            parse(&["--size"]),
+            Err(OptionsError::MissingValue("--size"))
+        );
+        assert_eq!(
+            parse(&["--bogus"]),
+            Err(OptionsError::Unknown("--bogus".into()))
+        );
+    }
+}

@@ -1,0 +1,42 @@
+[workspace]
+resolver = "3"
+members = [
+    "apps/desktop",
+    "crates/browser-core",
+    "crates/diagnostics",
+    "crates/paint",
+    "crates/renderer",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+rustlite-browser-core = { path = "crates/browser-core" }
+rustlite-diagnostics = { path = "crates/diagnostics" }
+rustlite-paint = { path = "crates/paint" }
+rustlite-renderer = { path = "crates/renderer" }
+
+# External crates (see docs/architecture.md#dependencies for rationale)
+softbuffer = { version = "0.4.8", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
+thiserror = "2.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+winit = "0.30"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "debuginfo"

@@ -1,0 +1,15 @@
+[package]
+name = "rustlite-renderer"
+description = "Rasterizes RustLite display lists into pixel buffers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+rustlite-paint.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true
