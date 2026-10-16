@@ -1,0 +1,19 @@
+<!DOCTYPE html><!-- compare: color -->
+<style>
+div p { color: rgb(10, 0, 0); }
+div > span { color: rgb(20, 0, 0); }
+h2 + p { color: rgb(30, 0, 0); }
+h3 ~ p { color: rgb(40, 0, 0); }
+[data-k] { color: rgb(50, 0, 0); }
+[data-k="v w"] { color: rgb(60, 0, 0); }
+[lang|=en] { color: rgb(70, 0, 0); }
+[class~=two] { color: rgb(80, 0, 0); }
+[href^="https:"] { color: rgb(90, 0, 0); }
+[href$=".pdf"] { color: rgb(100, 0, 0); }
+[title*=mid] { color: rgb(110, 0, 0); }
+[data-case="ABC" i] { color: rgb(120, 0, 0); }
+</style>
+<div><section><p id=desc>x</p></section><span id=child>y</span><em><span id=notchild>z</span></em></div>
+<h2>h</h2><p id=adjacent>a</p><h3>h</h3><b>x</b><p id=sibling>s</p>
+<i id=attr data-k>a</i> <i id=attrval data-k="v w">b</i> <i id=lang lang=en-GB>c</i> <i id=list class="one two three">d</i>
+<a id=prefix href="https://x">e</a> <a id=suffix href="/doc.pdf">f</a> <i id=sub title="a mid b">g</i> <i id=ci data-case=abc>h</i>

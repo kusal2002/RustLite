@@ -1,0 +1,19 @@
+<!DOCTYPE html><!-- compare: color background-color font-weight -->
+<style>
+#x { color: rgb(1, 1, 1); }
+.c { color: rgb(2, 2, 2); }
+p { color: rgb(3, 3, 3); }
+p.c.d { background-color: rgb(9, 9, 9); }
+.c.d { background-color: rgb(8, 8, 8); }
+p { font-weight: 700 !important; }
+#x { font-weight: 300; }
+.late { color: red; }
+.late { color: blue; }
+.imp { color: green !important; }
+</style>
+<p id=x class="c d">a</p>
+<p class=c>b</p>
+<p>c</p>
+<p class=late>d</p>
+<p class=imp style="color: purple">e</p>
+<p style="color: purple; background-color: rgb(7, 7, 7) !important" class="c d">f</p>

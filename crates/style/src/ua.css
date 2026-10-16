@@ -1,0 +1,111 @@
+/*
+ * RustLite user-agent stylesheet.
+ *
+ * Written from the HTML Standard's "Rendering" section (§15), limited to the
+ * properties RustLite supports. Margins use physical sides (horizontal-tb).
+ * Known gaps vs. browsers: no `:not()`, monospace font-size scaling, table
+ * border-spacing, form-control appearance, or -webkit-center alignment.
+ */
+
+/* §15.3.1 Hidden elements */
+area, base, basefont, datalist, head, link, meta, noembed, noframes, param, rp,
+script, style, template, title, dialog {
+  display: none;
+}
+[hidden] { display: none; }
+dialog[open] { display: block; }
+
+/* §15.3.3 Flow content */
+html, address, blockquote, body, center, div, figure, figcaption, footer, form,
+header, hr, legend, listing, main, p, plaintext, pre, search, xmp, article,
+aside, h1, h2, h3, h4, h5, h6, hgroup, nav, section, dir, dd, dl, dt, menu, ol,
+ul, fieldset, details, summary, optgroup {
+  display: block;
+}
+
+body { margin: 8px; }
+
+p, blockquote, figure, dl, ol, ul, menu, dir, pre, listing, xmp, plaintext {
+  margin-top: 1em;
+  margin-bottom: 1em;
+}
+blockquote, figure { margin-left: 40px; margin-right: 40px; }
+address { font-style: italic; }
+dd { margin-left: 40px; }
+
+/* §15.3.7 Lists */
+li { display: list-item; }
+ol, ul, menu, dir { padding-left: 40px; }
+ol ol, ol ul, ol menu, ol dir, ol dl,
+ul ol, ul ul, ul menu, ul dir, ul dl,
+menu ol, menu ul, menu menu, menu dir, menu dl,
+dir ol, dir ul, dir menu, dir dir, dir dl,
+dl ol, dl ul, dl menu, dl dir, dl dl {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* §15.3.6 Sections and headings */
+h1, h2, h3, h4, h5, h6 { font-weight: bold; }
+h1 { margin-top: 0.67em; margin-bottom: 0.67em; font-size: 2em; }
+h2 { margin-top: 0.83em; margin-bottom: 0.83em; font-size: 1.5em; }
+h3 { margin-top: 1em; margin-bottom: 1em; font-size: 1.17em; }
+h4 { margin-top: 1.33em; margin-bottom: 1.33em; font-size: 1em; }
+h5 { margin-top: 1.67em; margin-bottom: 1.67em; font-size: 0.83em; }
+h6 { margin-top: 2.33em; margin-bottom: 2.33em; font-size: 0.67em; }
+
+/* §15.3.4 Phrasing content */
+b, strong { font-weight: bolder; }
+i, cite, em, var, dfn { font-style: italic; }
+small, sub, sup { font-size: smaller; }
+big { font-size: larger; }
+mark { background-color: yellow; color: black; }
+:link { color: #0000ee; }
+:visited { color: #551a8b; }
+pre, code, kbd, samp, tt, listing, xmp, plaintext { font-family: monospace; }
+
+/* §15.3.10 Tables */
+table { display: table; }
+caption { display: table-caption; }
+colgroup { display: table-column-group; }
+col { display: table-column; }
+thead { display: table-header-group; }
+tbody { display: table-row-group; }
+tfoot { display: table-footer-group; }
+tr { display: table-row; }
+td, th { display: table-cell; padding: 1px; }
+th { font-weight: bold; }
+
+/* §15.3.11 Margin collapsing quirks are not modeled. */
+
+/* §15.4 Replaced elements and form controls (layout-relevant subset) */
+input, button, select, textarea { display: inline-block; }
+
+/*
+ * Form-control appearance is UA-defined (§15.5). These values reproduce
+ * Chromium 152 as observed by the style oracle (tests/style/ua-defaults), so
+ * pages sized around default controls lay out the same way.
+ */
+input {
+  background-color: white;
+  font-size: 13.333333px;
+  overflow: clip;
+  padding: 1px 2px;
+  border: 2px inset rgb(118, 118, 118);
+}
+button {
+  background-color: rgb(240, 240, 240);
+  font-size: 13.333333px;
+  text-align: center;
+  padding: 1px 6px;
+  border: 2px outset;
+}
+
+/* §15.3.13 The hr element */
+hr {
+  color: gray;
+  border-style: inset;
+  border-width: 1px;
+  margin: 0.5em auto;
+  overflow: hidden;
+}

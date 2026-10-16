@@ -1,0 +1,42 @@
+<html>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<head>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<style>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<body>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<p#n1>
+  color: rgb(102, 51, 153)
+  background-color: rgb(240, 248, 255)
+<p#n2>
+  color: rgba(0, 0, 0, 0)
+  background-color: rgb(47, 79, 79)
+<p#h3>
+  color: rgb(255, 136, 0)
+  background-color: rgb(10, 11, 12)
+<p#h4>
+  color: rgba(255, 0, 0, 0.5)
+  background-color: rgba(0, 0, 0, 0)
+<p#r1>
+  color: rgb(10, 20, 30)
+  background-color: rgba(10, 20, 30, 0.5)
+<p#r2>
+  color: rgba(10, 20, 30, 0.25)
+  background-color: rgb(255, 128, 0)
+<p#r3>
+  color: rgb(255, 0, 128)
+  background-color: rgba(0, 0, 0, 0)
+<p#s1>
+  color: rgb(0, 128, 0)
+  background-color: rgba(0, 0, 255, 0.5)
+<p#s2>
+  color: rgba(255, 0, 0, 0.3)
+  background-color: rgb(179, 224, 133)
+<p#bad>
+  color: rgb(1, 2, 3)
+  background-color: rgba(0, 0, 0, 0)

@@ -12,6 +12,7 @@ Options:
   --headless <PNG>          Render one frame without opening a window and write it as PNG
   --exit-after-frames <N>   Close the window after presenting N frames (smoke testing)
   --dump-dom <HTML_FILE>    Parse a local HTML file and print its DOM tree (html5lib format)
+  --dump-style <HTML_FILE>  Print computed styles of a local HTML file (viewport = --size)
   --debug-overlay           Start with the paint debug overlay enabled
   -h, --help                Print this help
 ";
@@ -21,6 +22,7 @@ pub struct Options {
     pub size: Size,
     pub headless_output: Option<PathBuf>,
     pub dump_dom: Option<PathBuf>,
+    pub dump_style: Option<PathBuf>,
     pub exit_after_frames: Option<u64>,
     pub debug_overlay: bool,
     pub help: bool,
@@ -32,6 +34,7 @@ impl Default for Options {
             size: Size::new(1024, 768),
             headless_output: None,
             dump_dom: None,
+            dump_style: None,
             exit_after_frames: None,
             debug_overlay: false,
             help: false,
@@ -79,6 +82,12 @@ impl Options {
                         .next()
                         .ok_or(OptionsError::MissingValue("--dump-dom"))?;
                     opts.dump_dom = Some(PathBuf::from(value));
+                }
+                "--dump-style" => {
+                    let value = args
+                        .next()
+                        .ok_or(OptionsError::MissingValue("--dump-style"))?;
+                    opts.dump_style = Some(PathBuf::from(value));
                 }
                 "--exit-after-frames" => {
                     let value = args

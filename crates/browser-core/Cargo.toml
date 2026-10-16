@@ -10,6 +10,7 @@ publish.workspace = true
 rustlite-dom.workspace = true
 rustlite-html.workspace = true
 rustlite-paint.workspace = true
+rustlite-style.workspace = true
 tracing.workspace = true
 
 [lints]

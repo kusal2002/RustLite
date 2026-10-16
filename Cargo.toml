@@ -3,11 +3,13 @@ resolver = "3"
 members = [
     "apps/desktop",
     "crates/browser-core",
+    "crates/css",
     "crates/diagnostics",
     "crates/dom",
     "crates/html",
     "crates/paint",
     "crates/renderer",
+    "crates/style",
 ]
 
 [workspace.package]
@@ -19,11 +21,13 @@ publish = false
 [workspace.dependencies]
 # Internal crates
 rustlite-browser-core = { path = "crates/browser-core" }
+rustlite-css = { path = "crates/css" }
 rustlite-diagnostics = { path = "crates/diagnostics" }
 rustlite-dom = { path = "crates/dom" }
 rustlite-html = { path = "crates/html" }
 rustlite-paint = { path = "crates/paint" }
 rustlite-renderer = { path = "crates/renderer" }
+rustlite-style = { path = "crates/style" }
 
 # External crates (see docs/architecture.md#dependencies for rationale)
 softbuffer = { version = "0.4.8", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }

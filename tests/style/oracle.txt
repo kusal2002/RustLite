@@ -1,0 +1,13 @@
+# user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Claude/2.37337.1 Chrome/152.0.7977.130 Safari/537.36 MSIX
+# device-pixel-ratio: 1
+box-shorthands CSS1Compat
+colors CSS1Compat
+combinators-and-attributes CSS1Compat
+display-values CSS1Compat
+fonts CSS1Compat
+inheritance-and-keywords CSS1Compat
+invalid-declarations CSS1Compat
+lengths-and-units CSS1Compat
+pseudo-classes CSS1Compat
+specificity-and-importance CSS1Compat
+ua-defaults CSS1Compat

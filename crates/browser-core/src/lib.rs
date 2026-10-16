@@ -1,22 +1,24 @@
-//! Coordinates the page pipeline: document → (style → layout →) display list.
+//! Coordinates the page pipeline: document → style → (layout →) display list.
 //!
-//! Current scope (Phase 2): a page shows either `about:blank` or an HTML
-//! document parsed by `rustlite-html`. Style and layout do not exist yet
-//! (Phases 3–4), so an HTML document is parsed into a DOM but still paints as
-//! an empty white canvas. What is in place is everything later phases hang
-//! off: the document, a viewport, and a cached display list that is rebuilt
-//! only when something invalidates it.
+//! Current scope (Phase 3): a page shows either `about:blank` or an HTML
+//! document parsed by `rustlite-html`, with computed styles from
+//! `rustlite-style`. Layout does not exist yet (Phase 4), so an HTML document
+//! still paints as an empty white canvas. Styles are computed lazily and
+//! invalidated when the viewport changes (viewport units depend on it).
 
 use rustlite_dom::Document;
 use rustlite_paint::{Color, DisplayList, Rect, Size};
+use rustlite_style::{ComputedStyles, Stylist};
 
-/// A parsed HTML document and where it came from.
+/// A parsed HTML document, its stylesheets, and where it came from.
 #[derive(Debug)]
 pub struct HtmlDocument {
     pub url: String,
     pub dom: Document,
     /// Number of HTML parse errors (repairs) encountered.
     pub parse_errors: usize,
+    pub stylist: Stylist,
+    styles: Option<ComputedStyles>,
 }
 
 /// What a page currently shows.
@@ -44,6 +46,7 @@ pub struct Page {
     display_list: DisplayList,
     paint_dirty: bool,
     paint_count: u64,
+    style_count: u64,
 }
 
 impl Page {
@@ -54,7 +57,40 @@ impl Page {
             display_list: DisplayList::new(),
             paint_dirty: true,
             paint_count: 0,
+            style_count: 0,
         }
+    }
+
+    /// Number of full style recalculations (for invalidation tests).
+    pub fn style_count(&self) -> u64 {
+        self.style_count
+    }
+
+    /// The document's computed styles, recomputed if invalidated.
+    /// `None` for `about:blank`.
+    pub fn computed_styles(&mut self) -> Option<(&Document, &ComputedStyles)> {
+        let Content::Html(doc) = &mut self.content else {
+            return None;
+        };
+        if doc.styles.is_none() {
+            let start = std::time::Instant::now();
+            let viewport = (self.viewport.width as f32, self.viewport.height as f32);
+            let (styles, stats) = rustlite_style::compute_styles(&doc.dom, &doc.stylist, viewport);
+            tracing::info!(
+                elements = stats.elements,
+                shared = stats.shared,
+                rules = stats.sheets.rules,
+                author_sheets = stats.sheets.author_sheets,
+                dropped_rules = stats.sheets.dropped_rules,
+                skipped_at_rules = stats.sheets.skipped_at_rules,
+                style_ms = start.elapsed().as_secs_f64() * 1000.0,
+                "styles computed"
+            );
+            doc.styles = Some(styles);
+            self.style_count += 1;
+        }
+        let doc = &**doc;
+        doc.styles.as_ref().map(|s| (&doc.dom, s))
     }
 
     pub fn content(&self) -> &Content {
@@ -78,10 +114,13 @@ impl Page {
             parse_ms = start.elapsed().as_secs_f64() * 1000.0,
             "HTML document parsed"
         );
+        let stylist = rustlite_style::stylist_for(&out.document);
         self.content = Content::Html(Box::new(HtmlDocument {
             url,
             dom: out.document,
             parse_errors: out.error_count,
+            stylist,
+            styles: None,
         }));
         self.paint_dirty = true;
     }
@@ -113,6 +152,10 @@ impl Page {
             tracing::debug!(?viewport, "page viewport changed");
             self.viewport = viewport;
             self.paint_dirty = true;
+            // Viewport units make computed values depend on the viewport.
+            if let Content::Html(doc) = &mut self.content {
+                doc.styles = None;
+            }
         }
     }
 
@@ -193,6 +236,27 @@ mod tests {
             panic!("expected HTML content")
         };
         assert!(doc.dom.find_element(doc.dom.root(), "p").is_some());
+    }
+
+    #[test]
+    fn styles_are_cached_and_invalidated_by_viewport() {
+        let mut page = Page::new(Size::new(1000, 500));
+        assert!(
+            page.computed_styles().is_none(),
+            "about:blank has no styles"
+        );
+        page.load_html("test:doc", "<style>p { margin-left: 10vw }</style><p>x");
+        let margin = |page: &mut Page| {
+            let (dom, styles) = page.computed_styles().unwrap();
+            let p = dom.find_element(dom.root(), "p").unwrap();
+            rustlite_style::resolved_value(styles.get(p).unwrap(), "margin-left").unwrap()
+        };
+        assert_eq!(margin(&mut page), "100px");
+        assert_eq!(margin(&mut page), "100px");
+        assert_eq!(page.style_count(), 1, "second access must hit the cache");
+        page.set_viewport(Size::new(500, 500));
+        assert_eq!(margin(&mut page), "50px");
+        assert_eq!(page.style_count(), 2);
     }
 
     #[test]

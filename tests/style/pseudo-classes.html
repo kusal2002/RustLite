@@ -1,0 +1,20 @@
+<!DOCTYPE html><!-- compare: color background-color -->
+<style>
+:root { background-color: rgb(1, 2, 3); }
+li:first-child { color: rgb(0, 10, 0); }
+li:last-child { color: rgb(0, 20, 0); }
+li:only-child { color: rgb(0, 30, 0); }
+span:first-of-type { color: rgb(0, 40, 0); }
+span:last-of-type { color: rgb(0, 50, 0); }
+b:only-of-type { color: rgb(0, 60, 0); }
+div:empty { background-color: rgb(0, 70, 0); }
+a:link { color: rgb(0, 80, 0); }
+a:any-link { background-color: rgb(0, 90, 0); }
+p:hover { color: red; }
+p::before { color: red; }
+</style>
+<ul><li id=first>1</li><li id=middle>2</li><li id=last>3</li></ul>
+<ol><li id=only>only</li></ol>
+<p id=p><span id=s1>a</span><b id=onlyb>b</b><span id=s2>c</span><span id=s3>d</span></p>
+<div id=empty></div><div id=notempty> </div><div id=comment><!-- c --></div>
+<a id=link href=x>l</a><a id=nohref>n</a>

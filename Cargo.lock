@@ -1144,8 +1144,13 @@ dependencies = [
  "rustlite-dom",
  "rustlite-html",
  "rustlite-paint",
+ "rustlite-style",
  "tracing",
 ]
+
+[[package]]
+name = "rustlite-css"
+version = "0.1.0"
 
 [[package]]
 name = "rustlite-desktop"
@@ -1156,6 +1161,7 @@ dependencies = [
  "rustlite-dom",
  "rustlite-paint",
  "rustlite-renderer",
+ "rustlite-style",
  "softbuffer",
  "thiserror 2.0.21",
  "tracing",
@@ -1196,6 +1202,15 @@ dependencies = [
  "rustlite-paint",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "rustlite-style"
+version = "0.1.0"
+dependencies = [
+ "rustlite-css",
+ "rustlite-dom",
+ "rustlite-html",
 ]
 
 [[package]]

@@ -85,3 +85,29 @@ fn dump_dom_reports_missing_file() {
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot read"));
 }
+
+#[test]
+fn dump_style_prints_computed_styles() {
+    let path = std::env::temp_dir().join(format!("rustlite-style-{}.html", std::process::id()));
+    std::fs::write(
+        &path,
+        "<!DOCTYPE html><style>p { color: rgb(1, 2, 3) }</style><p id=x>a",
+    )
+    .unwrap();
+    let output = rustlite()
+        .args(["--size", "800x600", "--dump-style"])
+        .arg(&path)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let p = stdout.split("<p#x>").nth(1).expect("p element in dump");
+    assert!(p.contains("  color: rgb(1, 2, 3)\n"), "{p}");
+    assert!(p.contains("  display: block\n"), "{p}");
+    assert!(p.contains("  margin-top: 16px\n"), "{p}");
+}

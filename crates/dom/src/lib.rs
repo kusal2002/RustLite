@@ -32,7 +32,8 @@ impl NodeId {
         Self(NonZeroU32::new(raw).expect("non-zero"))
     }
 
-    fn index(self) -> usize {
+    /// Dense index of this node in its document (for side tables such as styles).
+    pub fn index(self) -> usize {
         self.0.get() as usize - 1
     }
 }

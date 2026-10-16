@@ -1,0 +1,19 @@
+<!DOCTYPE html><!-- compare: font-family font-weight font-style font-size -->
+<style>
+body { font-family: "Open Sans", Arial, sans-serif; }
+#w1 { font-weight: 100; }
+#w2 { font-weight: bolder; }
+#w3 { font-weight: lighter; }
+#w4 { font-weight: 550; }
+#w5 { font-weight: bold; }
+#fam1 { font-family: Times New Roman, serif; }
+#fam3 { font-family: 'serif', cursive; }
+#st1 { font-style: italic; }
+#st2 { font-style: oblique; }
+#sz { font-size: xx-small; }
+#sz2 { font-size: xxx-large; }
+</style>
+<div id=w1>a<span id=w2>b</span></div>
+<div id=w5>c<span id=w3>d</span><span id=w4>e<b id=nested>f</b></span></div>
+<p id=fam1>g</p><p id=fam3>i</p>
+<p id=st1>j<span id=st2>k</span></p><p id=sz>l</p><p id=sz2>m</p>

@@ -1,0 +1,14 @@
+<!DOCTYPE html><!-- compare: color background-color -->
+<style>
+#n1 { color: rebeccapurple; background-color: AliceBlue; }
+#n2 { color: transparent; background-color: darkslategray; }
+#h3 { color: #f80; background-color: #0a0b0c; }
+#h4 { color: #ff000080; }
+#r1 { color: rgb(10, 20, 30); background-color: rgba(10, 20, 30, 0.5); }
+#r2 { color: rgb(10 20 30 / 0.25); background-color: rgb(100%, 50%, 0%); }
+#r3 { color: rgb(300, -10, 128); }
+#s1 { color: hsl(120, 100%, 25%); background-color: hsl(240deg 100% 50% / 50%); }
+#s2 { color: hsla(0, 100%, 50%, 0.3); background-color: hsl(0.25turn, 60%, 70%); }
+#bad { color: rgb(1, 2, 3); color: #12; color: notacolor; }
+</style>
+<p id=n1>a</p><p id=n2>b</p><p id=h3>c</p><p id=h4>d</p><p id=r1>e</p><p id=r2>f</p><p id=r3>g</p><p id=s1>h</p><p id=s2>i</p><p id=bad>j</p>

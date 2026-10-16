@@ -184,6 +184,29 @@ const MAX_DUMP_INPUT: u64 = 64 * 1024 * 1024;
 /// Parses a local HTML file (named explicitly on the command line) and returns
 /// its DOM in html5lib tree format.
 pub fn dump_dom(path: &Path) -> Result<String, AppError> {
+    let page = load_local_file(path, rustlite_paint::Size::new(0, 0))?;
+    let Content::Html(doc) = page.content() else {
+        unreachable!("load_html always produces HTML content")
+    };
+    Ok(rustlite_dom::dump_tree(&doc.dom, doc.dom.root()))
+}
+
+/// Loads a local HTML file and returns the computed styles of every element
+/// (the same format as the style oracle), using `viewport` for viewport units.
+pub fn dump_style(path: &Path, viewport: rustlite_paint::Size) -> Result<String, AppError> {
+    let mut page = load_local_file(path, viewport)?;
+    let (dom, styles) = page
+        .computed_styles()
+        .expect("load_html always produces HTML content");
+    Ok(rustlite_style::dump_styles(
+        dom,
+        styles,
+        rustlite_style::DEFAULT_DUMP_PROPERTIES,
+    ))
+}
+
+/// Reads a local HTML file named explicitly on the command line into a page.
+fn load_local_file(path: &Path, viewport: rustlite_paint::Size) -> Result<Page, AppError> {
     let display = path.display().to_string();
     let input_error = |source| AppError::Input {
         path: display.clone(),
@@ -201,10 +224,7 @@ pub fn dump_dom(path: &Path) -> Result<String, AppError> {
     // Encoding sniffing arrives with networking; until then input is UTF-8,
     // with invalid sequences replaced (as a UTF-8 decoder in a browser would).
     let source = String::from_utf8_lossy(&bytes);
-    let mut page = Page::new(rustlite_paint::Size::new(0, 0));
+    let mut page = Page::new(viewport);
     page.load_html(format!("file:{display}"), &source);
-    let Content::Html(doc) = page.content() else {
-        unreachable!("load_html always produces HTML content")
-    };
-    Ok(rustlite_dom::dump_tree(&doc.dom, doc.dom.root()))
+    Ok(page)
 }

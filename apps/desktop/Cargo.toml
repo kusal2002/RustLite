@@ -16,6 +16,7 @@ rustlite-diagnostics.workspace = true
 rustlite-dom.workspace = true
 rustlite-paint.workspace = true
 rustlite-renderer.workspace = true
+rustlite-style.workspace = true
 softbuffer.workspace = true
 thiserror.workspace = true
 tracing.workspace = true

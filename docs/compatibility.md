@@ -52,4 +52,47 @@ hierarchy checks; text merging; attributes; mutation generation counter;
 non-recursive traversal and dump. HTML namespace only. No DOM events or
 mutation observers yet (Phase 9).
 
-CSS, layout, text, networking and JavaScript are not implemented yet.
+### CSS (CSS-001) — Tested, verified on reference browser
+
+Evidence: [CSS-001](../research/specifications/CSS-001.md),
+`crates/style/tests/golden.rs` (11/11 fixtures match Chromium 152 `getComputedStyle`).
+
+Supported:
+- Syntax: CSS Syntax 3 tokenizer (escapes, comments, numbers, dimensions, URLs,
+  bad strings/URLs), qualified rules, declaration lists with `!important`,
+  error recovery for invalid declarations and unterminated input.
+- Sources: user-agent sheet (`crates/style/src/ua.css`, from HTML §15), `<style>`
+  elements (no `media`, or `all`/`screen`), `style=""` attributes.
+- Selectors: type, `*`, `#id`, `.class`, `[attr]` with `=` `~=` `|=` `^=` `$=` `*=`
+  and `i`/`s` flags, combinators (descendant, `>`, `+`, `~`), `:root`
+  `:first-child` `:last-child` `:only-child` `:first-of-type` `:last-of-type`
+  `:only-of-type` `:empty` `:link` `:any-link`; `:visited` `:hover` `:active`
+  `:focus*` parse but never match yet; pseudo-elements parse but match nothing.
+  Quirks-mode case-insensitive class/ID matching.
+- Cascade: origin and importance, inline styles above selectors, specificity,
+  source order; inheritance; `inherit` `initial` `unset` (`revert` ≈ `unset`).
+- Properties: `display`, `color`, `background-color` (and single-color
+  `background`), `font-size`, `font-weight` (incl. `bolder`/`lighter`),
+  `font-style`, `font-family`, `line-height`, `text-align`, `overflow(-x/-y)`,
+  `width`, `height`, `margin(-*)`, `padding(-*)`, `border`, `border-*`,
+  `border-{width,style,color}` and per-side longhands.
+- Values: lengths in px/em/rem/vw/vh/vmin/vmax/in/cm/mm/Q/pt/pc, percentages,
+  font-size keywords, all 148 named colors, hex, `rgb()`/`rgba()`/`hsl()`/`hsla()`
+  (legacy and modern syntax), `transparent`, `currentcolor`.
+- Computed-value rules: root blockification, border width 0 for `none`/`hidden`,
+  border-width snapping, overflow `visible`/`clip` fix-up.
+
+Not supported yet:
+
+| Area | Behavior today |
+|---|---|
+| At-rules (`@media`, `@import`, `@supports`, `@font-face`, `@keyframes`, `@layer`) | Skipped entirely |
+| `<link rel=stylesheet>` | Ignored (needs networking, Phase 6) |
+| `:not()` `:is()` `:where()` `:has()` `:nth-*()` and other pseudo-classes | Rule dropped |
+| Custom properties, `var()`, `calc()`, `ex`/`ch` units | Declaration dropped |
+| `font` shorthand; `background` with images/positions | Declaration dropped |
+| Monospace default size (13px), `th`/`center` `-internal-center` | Not modeled |
+| Default font family | `"Times New Roman"` (`Times` on macOS; Linux/macOS not observed) |
+| Positioned/floated blockification | Only the root element is blockified |
+
+Layout, text, networking and JavaScript are not implemented yet.

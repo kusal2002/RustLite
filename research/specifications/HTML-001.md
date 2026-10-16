@@ -3,7 +3,7 @@
 - **Reference browser:** Chromium 152.0.7977.130 (the Claude desktop app's built-in
   browser pane; UA recorded in `tests/html/oracle.txt`)
 - **OS:** Windows 11 Pro 10.0.26200
-- **Observation tool:** `scripts/html-oracle/server.py` (loopback-only) + the browser's
+- **Observation tool:** `scripts/oracle/server.py` (loopback-only) + the browser's
   `DOMParser.parseFromString(source, "text/html")`. **REA was not used** for this
   feature: a parser oracle needs only `DOMParser`, which needs no CDP session.
 - **Date:** 2026-10-16

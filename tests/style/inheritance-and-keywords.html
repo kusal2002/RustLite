@@ -1,0 +1,17 @@
+<!DOCTYPE html><!-- compare: color background-color font-size font-weight text-align border-top-color border-top-width padding-left -->
+<style>
+#outer { color: rgb(200, 0, 0); background-color: rgb(0, 0, 200); font-size: 20px; font-weight: 600; text-align: center; padding-left: 5px; border-top: 2px solid; }
+#inh { background-color: inherit; padding-left: inherit; }
+#ini { color: initial; font-size: initial; text-align: initial; }
+#uns { color: unset; background-color: unset; padding-left: unset; }
+#cur { border-top: 3px solid currentcolor; color: rgb(0, 150, 0); }
+#bgcur { color: rgb(5, 6, 7); background-color: currentcolor; }
+</style>
+<div id=outer>o
+  <div id=plain>p</div>
+  <div id=inh>i</div>
+  <div id=ini>n</div>
+  <div id=uns>u</div>
+  <div id=cur>c</div>
+  <div id=bgcur>b</div>
+</div>

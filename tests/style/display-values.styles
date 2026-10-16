@@ -1,0 +1,30 @@
+<html>
+  display: block
+<head>
+  display: none
+<style>
+  display: none
+<body>
+  display: block
+<div#a>
+  display: inline-block
+<div#b>
+  display: flex
+<div#c>
+  display: inline-grid
+<div#d>
+  display: none
+<span#insidenone>
+  display: inline
+<div#e>
+  display: list-item
+<div#f>
+  display: table-cell
+<div#g>
+  display: contents
+<div#h>
+  display: flow-root
+<span#sb>
+  display: block
+<span#plain>
+  display: inline

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added — 2026-10-16 (Phase 3)
+- `rustlite-css`: CSS Syntax 3 tokenizer, rule and declaration parser with
+  error recovery, selector parser (type/universal/id/class/attribute,
+  combinators, pseudo-classes, pseudo-elements) and specificity.
+- `rustlite-style`: UA stylesheet from HTML §15, indexed rule matching, cascade
+  (origin, importance, inline, specificity, order), inheritance, computed
+  values for 33 longhands, style sharing, Chrome-format resolved values.
+- browser-core computes styles lazily and restyles on viewport change.
+- `--dump-style` CLI option.
+- Style oracle (`/style` page of `scripts/oracle/server.py`, moved from
+  `scripts/html-oracle/`) and 11 golden fixtures matching Chromium 152.
+
 ### Added — 2026-10-16 (Phase 2)
 - `rustlite-dom`: arena DOM with 4-byte `NodeId`, safe mutation, traversal,
   html5lib-format tree dump.

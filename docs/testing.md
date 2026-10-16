@@ -22,6 +22,8 @@ Both run: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- 
 | App smoke | `apps/desktop/tests/smoke.rs` | Runs the real binary headless; no display required |
 | Windowed smoke | manual / CI with display | `rustlite --exit-after-frames 120` must exit 0 |
 | Golden HTML | `tests/html/*.html` → `*.tree` via `crates/html/tests/golden.rs` | Expected trees come from a reference browser (below) |
+| Golden style | `tests/style/*.html` → `*.styles` via `crates/style/tests/golden.rs` | `getComputedStyle` from a reference browser, 800×600 |
+| Style dump | `rustlite --size 800x600 --dump-style file.html` | Same format as the style goldens |
 | DOM dump | `rustlite --dump-dom file.html` | Prints RustLite's tree in html5lib format for ad-hoc diffs |
 | Screenshot | `rustlite --headless out.png` | Deterministic CPU raster; golden images from Phase 5 |
 | Differential | REA + Chrome | See [rea-workflow.md](rea-workflow.md) |
@@ -40,14 +42,19 @@ Not run yet. A curated subset (html/syntax/parsing, css/selectors,
 css/CSS2/normal-flow) will be imported once the parser exists. No WPT
 compliance is claimed.
 
-## Regenerating HTML goldens (reference-browser oracle)
+## Regenerating goldens (reference-browser oracle)
 
 ```bash
-python scripts/html-oracle/server.py 8765
+python scripts/oracle/server.py 8765
 ```
 
-Open `http://127.0.0.1:8765/` in the reference browser. The page parses every
-`tests/html/*.html` with `DOMParser`, and the server writes `*.tree` plus
-`oracle.txt` (user agent and document modes). Review the diff before
+Open `http://127.0.0.1:8765/html` and `http://127.0.0.1:8765/style` in the
+reference browser. `/html` parses every `tests/html/*.html` with `DOMParser`
+and writes `*.tree`; `/style` renders every `tests/style/*.html` in an
+800×600 `srcdoc` iframe and writes `*.styles` from `getComputedStyle`. Each
+writes `oracle.txt` (user agent, device pixel ratio, document modes).
+A style fixture can begin with `<!-- compare: prop prop ... -->` to choose the
+compared properties. `srcdoc` documents are never in quirks mode, so quirks
+behavior needs unit tests instead. Review the diff before
 committing; never edit `.tree` files by hand to make a test pass. Intentional
 differences go in `KNOWN_DIFFERENCES` in `golden.rs` with a reason.

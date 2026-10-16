@@ -1,7 +1,7 @@
 //! Golden tests: `tests/html/<name>.html` must parse to `tests/html/<name>.tree`.
 //!
 //! Expected trees are produced by a reference browser's `DOMParser`
-//! (see `scripts/html-oracle/server.py`), not written by hand. Document modes
+//! (see `scripts/oracle/server.py`, `/html` page), not written by hand. Document modes
 //! from the same run are in `tests/html/oracle.txt`. Failures print the
 //! input, expected, and actual trees.
 

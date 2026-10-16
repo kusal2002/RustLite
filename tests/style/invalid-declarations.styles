@@ -1,0 +1,45 @@
+<html>
+  color: rgb(0, 0, 0)
+  margin-top: 0px
+  padding-left: 0px
+  display: block
+<head>
+  color: rgb(0, 0, 0)
+  margin-top: 0px
+  padding-left: 0px
+  display: none
+<style>
+  color: rgb(0, 0, 0)
+  margin-top: 0px
+  padding-left: 0px
+  display: none
+<body>
+  color: rgb(0, 0, 0)
+  margin-top: 8px
+  padding-left: 0px
+  display: block
+<p#a>
+  color: rgb(1, 1, 1)
+  margin-top: 5px
+  padding-left: 0px
+  display: block
+<p#b>
+  color: rgb(0, 0, 0)
+  margin-top: 16px
+  padding-left: 4px
+  display: inline-block
+<p#c>
+  color: rgb(3, 3, 3)
+  margin-top: 16px
+  padding-left: 0px
+  display: block
+<p#d>
+  color: rgb(4, 4, 4)
+  margin-top: 16px
+  padding-left: 0px
+  display: block
+<p#f>
+  color: rgb(6, 6, 6)
+  margin-top: 16px
+  padding-left: 0px
+  display: block

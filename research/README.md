@@ -34,3 +34,4 @@ Review every capture for credentials, tokens and personal data before committing
 
 - [ADR-0001](decisions/ADR-0001-cpu-raster-first.md) — CPU rasterization first, wgpu later.
 - [HTML-001](specifications/HTML-001.md) — HTML parsing; 32/32 fixtures match Chromium 152.
+- [CSS-001](specifications/CSS-001.md) — CSS parsing, cascade, computed values; 11/11 fixtures match Chromium 152.

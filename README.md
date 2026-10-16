@@ -3,10 +3,10 @@
 An original, cross-platform web browser engine written in Rust: HTML, DOM, CSS,
 layout, paint and rendering are RustLite code, not a wrapped engine.
 
-**Status:** Phase 2. It opens a window with a toolbar rendered by RustLite's
-own CPU rasterizer, and parses HTML into a DOM with a standards-based parser
-(verified against Chromium on 32 fixtures). It does not style, lay out, or
-load web pages yet. See [docs/roadmap.md](docs/roadmap.md) and
+**Status:** Phase 3. It opens a window with a toolbar rendered by RustLite's
+own CPU rasterizer, parses HTML into a DOM, and computes CSS styles (both
+verified against Chromium on golden fixtures). It does not lay out, render,
+or load web pages yet. See [docs/roadmap.md](docs/roadmap.md) and
 [docs/progress.md](docs/progress.md).
 
 ## Build and run
@@ -25,6 +25,7 @@ Options:
 --exit-after-frames <N>   Close after N frames (smoke test)
 --debug-overlay           Outline every painted rectangle (toggle: F12)
 --dump-dom <HTML_FILE>    Print the parsed DOM of a local file (html5lib format)
+--dump-style <HTML_FILE>  Print computed styles of a local file (viewport = --size)
 ```
 
 Shortcuts: Ctrl+Q / Ctrl+W (Cmd on macOS) quit · F12 debug overlay.

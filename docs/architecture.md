@@ -18,9 +18,10 @@ css (tokenizer, parser) ─► style (cascade, computed values)
                                   paint (display list) ─► renderer (raster) ─► platform (present)
 ```
 
-Status today (Phase 2): `browser-core` owns a `Page` that is either
+Status today (Phase 3): `browser-core` owns a `Page` that is either
 `about:blank` or an HTML document parsed by `rustlite-html` into a
-`rustlite-dom` tree. With no style/layout yet, both paint as a white canvas. The desktop shell composes
+`rustlite-dom` tree, with computed styles from `rustlite-style`. With no
+layout yet, both paint as a white canvas. The desktop shell composes
 browser chrome + page display list and rasterizes it on the CPU into the
 window's presentation buffer. Every stage between "document" and "display list"
 is still to be built (see [roadmap](roadmap.md)).
@@ -30,25 +31,29 @@ is still to be built (see [roadmap](roadmap.md)).
 | Path | Crate | Responsibility | Status |
 |---|---|---|---|
 | `apps/desktop` | `rustlite-desktop` (bin `rustlite`) | Window, event loop, toolbar, shortcuts, frame composition, headless mode | Implemented |
-| `crates/browser-core` | `rustlite-browser-core` | Page/document lifecycle, viewport, cached display list with invalidation | Implemented (about:blank + parsed HTML; no rendering of content) |
+| `crates/browser-core` | `rustlite-browser-core` | Page/document lifecycle, viewport, cached display list with invalidation | Implemented (about:blank + parsed, styled HTML; no rendering of content) |
 | `crates/paint` | `rustlite-paint` | Geometry (`Rect`, `Size`, `Point`), `Color`, `DisplayList` | Implemented |
 | `crates/renderer` | `rustlite-renderer` | CPU rasterizer (fills, borders, clips, alpha), PNG encoder | Implemented |
 | `crates/diagnostics` | `rustlite-diagnostics` | `tracing` setup, frame-time statistics | Implemented |
 | `crates/dom` | `rustlite-dom` | Arena DOM, traversal, mutation, html5lib tree dump | Implemented |
 | `crates/html` | `rustlite-html` | WHATWG tokenizer + tree builder | Implemented (see compatibility.md) |
+| `crates/css` | `rustlite-css` | CSS tokenizer, rule/declaration parser, selectors + specificity | Implemented (first layer) |
+| `crates/style` | `rustlite-style` | UA sheet, matching, cascade, computed values, serialization | Implemented (first layer) |
 
 Planned crates are created when their first real code lands, not as empty
-shells: `css`, `style`, `layout`, `fonts`, `net`, `platform`,
+shells: `layout`, `fonts`, `net`, `platform`,
 `js-runtime`, `web-apis`, `storage`. Their responsibilities follow the master
 specification §3.
 
 ### Dependency direction
 
 ```
-desktop ─► browser-core ─► html ─► dom
-   │            └─────────► paint
-   │  └──► renderer ─────► paint
-   └─────► diagnostics
+desktop ──► browser-core ──► html ──► dom
+   │              ├──────────► style ─► css
+   │              │              └────► dom
+   │              └──────────► paint
+   ├──► renderer ─────────────► paint
+   └──► diagnostics
 ```
 
 Lower layers never depend on higher ones. `paint` and `dom` have no internal dependencies;

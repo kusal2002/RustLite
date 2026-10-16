@@ -1,0 +1,60 @@
+<html>
+  color: rgb(0, 0, 0)
+  background-color: rgb(1, 2, 3)
+<head>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<style>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<body>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<ul>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<li#first>
+  color: rgb(0, 10, 0)
+  background-color: rgba(0, 0, 0, 0)
+<li#middle>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<li#last>
+  color: rgb(0, 20, 0)
+  background-color: rgba(0, 0, 0, 0)
+<ol>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<li#only>
+  color: rgb(0, 30, 0)
+  background-color: rgba(0, 0, 0, 0)
+<p#p>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<span#s1>
+  color: rgb(0, 40, 0)
+  background-color: rgba(0, 0, 0, 0)
+<b#onlyb>
+  color: rgb(0, 60, 0)
+  background-color: rgba(0, 0, 0, 0)
+<span#s2>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<span#s3>
+  color: rgb(0, 50, 0)
+  background-color: rgba(0, 0, 0, 0)
+<div#empty>
+  color: rgb(0, 0, 0)
+  background-color: rgb(0, 70, 0)
+<div#notempty>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+<div#comment>
+  color: rgb(0, 0, 0)
+  background-color: rgb(0, 70, 0)
+<a#link>
+  color: rgb(0, 80, 0)
+  background-color: rgb(0, 90, 0)
+<a#nohref>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)

@@ -1,0 +1,99 @@
+<html>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+  font-size: 16px
+  font-weight: 400
+  text-align: start
+  border-top-color: rgb(0, 0, 0)
+  border-top-width: 0px
+  padding-left: 0px
+<head>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+  font-size: 16px
+  font-weight: 400
+  text-align: start
+  border-top-color: rgb(0, 0, 0)
+  border-top-width: 0px
+  padding-left: 0px
+<style>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+  font-size: 16px
+  font-weight: 400
+  text-align: start
+  border-top-color: rgb(0, 0, 0)
+  border-top-width: 0px
+  padding-left: 0px
+<body>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+  font-size: 16px
+  font-weight: 400
+  text-align: start
+  border-top-color: rgb(0, 0, 0)
+  border-top-width: 0px
+  padding-left: 0px
+<div#outer>
+  color: rgb(200, 0, 0)
+  background-color: rgb(0, 0, 200)
+  font-size: 20px
+  font-weight: 600
+  text-align: center
+  border-top-color: rgb(200, 0, 0)
+  border-top-width: 2px
+  padding-left: 5px
+<div#plain>
+  color: rgb(200, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+  font-size: 20px
+  font-weight: 600
+  text-align: center
+  border-top-color: rgb(200, 0, 0)
+  border-top-width: 0px
+  padding-left: 0px
+<div#inh>
+  color: rgb(200, 0, 0)
+  background-color: rgb(0, 0, 200)
+  font-size: 20px
+  font-weight: 600
+  text-align: center
+  border-top-color: rgb(200, 0, 0)
+  border-top-width: 0px
+  padding-left: 5px
+<div#ini>
+  color: rgb(0, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+  font-size: 16px
+  font-weight: 600
+  text-align: start
+  border-top-color: rgb(0, 0, 0)
+  border-top-width: 0px
+  padding-left: 0px
+<div#uns>
+  color: rgb(200, 0, 0)
+  background-color: rgba(0, 0, 0, 0)
+  font-size: 20px
+  font-weight: 600
+  text-align: center
+  border-top-color: rgb(200, 0, 0)
+  border-top-width: 0px
+  padding-left: 0px
+<div#cur>
+  color: rgb(0, 150, 0)
+  background-color: rgba(0, 0, 0, 0)
+  font-size: 20px
+  font-weight: 600
+  text-align: center
+  border-top-color: rgb(0, 150, 0)
+  border-top-width: 3px
+  padding-left: 0px
+<div#bgcur>
+  color: rgb(5, 6, 7)
+  background-color: rgb(5, 6, 7)
+  font-size: 20px
+  font-weight: 600
+  text-align: center
+  border-top-color: rgb(5, 6, 7)
+  border-top-width: 0px
+  padding-left: 0px

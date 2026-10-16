@@ -22,7 +22,9 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | DOM-001 | Arena DOM | Tested | `rustlite-dom` tests (incl. 200k-deep traversal) |
 | CORE-002 | Page loads parsed HTML; document title | Tested | `browser-core` tests (content not painted until Phase 3–4) |
 | DIAG-003 | `--dump-dom` CLI (html5lib tree format) | Tested | `apps/desktop/tests/smoke.rs` |
-| CSS-001 | CSS parser | Planned | — |
+| CSS-001 | CSS tokenizer, parser, selectors, cascade, computed values | Verified on reference browser (fixture set) | 11/11 style goldens match Chromium 152; [spec](../research/specifications/CSS-001.md) |
+| CORE-003 | Page computes styles lazily; viewport change invalidates | Tested | `browser-core` tests |
+| DIAG-004 | `--dump-style` CLI | Tested | `apps/desktop/tests/smoke.rs` |
 | TEXT-001 | Text shaping/rendering | Planned | — |
 | NET-001 | HTTP(S) loading | Planned | — |
 | NAV-001 | Navigation state machine | Planned | — |
@@ -32,13 +34,15 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 | Platform | Build | Tests | Window | Notes |
 |---|---|---|---|---|
-| Windows 11 x64 (MSVC) | ✅ | ✅ 84/84 | ✅ | Ryzen 5 5600G, Radeon iGPU |
+| Windows 11 x64 (MSVC) | ✅ | ✅ 137/137 | ✅ | Ryzen 5 5600G, Radeon iGPU |
 | Linux x64 | Unverified | Unverified | Unverified | CI job defined in `.github/workflows/ci.yml`, not yet run |
 | macOS | Unverified | Unverified | Unverified | CI job defined, not yet run |
 
 ## Known limitations
 
-- HTML is parsed into a DOM but not rendered (no CSS/style/layout yet).
+- HTML is parsed and styled but not rendered (no layout yet).
+- CSS gaps (at-rules, `:not()`, `var()`, `calc()`, external sheets) are listed in
+  [compatibility.md](compatibility.md#css-css-001--tested-verified-on-reference-browser).
 - HTML parser deviations are listed in [compatibility.md](compatibility.md#html-parsing-html-001--tested-verified-on-reference-browser).
 - Toolbar has no text (no font stack yet); buttons only log clicks.
 - No vsync/frame pacing (softbuffer on Windows presents immediately).
@@ -73,3 +77,20 @@ Tested · Verified on reference browser · Blocked · Deferred.
 - **Measurements:** 4.3 MB synthetic page → 540k nodes in ~194 ms (release), see
   [performance.md](performance.md).
 - **Next:** Phase 3, CSS tokenizer/parser, selectors, cascade.
+
+### 2026-10-16 — Phase 3: CSS and computed styles
+
+- **What:** `rustlite-css` (CSS Syntax 3 tokenizer, rule/declaration parser,
+  selector parser with specificity) and `rustlite-style` (UA stylesheet,
+  indexed rule matching, cascade, inheritance, computed values, style sharing,
+  resolved-value serialization). Page computes styles lazily; `--dump-style` CLI.
+  Oracle generalized to `scripts/oracle/server.py` with `/html` and `/style` pages.
+- **Why:** Layout (Phase 4) consumes computed styles.
+- **Evidence-driven fixes:** the style oracle found three differences on the first
+  run (alpha serialization, default font family, form-control UA styles); all
+  fixed, now 11/11 fixtures match Chromium 152.
+- **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 137 passed
+  (incl. 32 HTML + 11 style goldens) · release build ✅.
+- **Measurements:** 300,005 elements styled in ~72 ms (release), see
+  [performance.md](performance.md).
+- **Next:** Phase 4, block and inline layout.
