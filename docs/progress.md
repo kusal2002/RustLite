@@ -38,8 +38,8 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | Platform | Build | Tests | Window | Notes |
 |---|---|---|---|---|
 | Windows 11 x64 (MSVC) | ✅ | ✅ 165/165 | ✅ | Ryzen 5 5600G, Radeon iGPU |
-| Linux x64 | ✅ CI | ✅ CI | Unverified | CI (ubuntu-latest) green for Phases 1–3; no display in CI |
-| macOS | ✅ CI | Pending re-run | Unverified | Style golden fixed in `ed08a83`. Layout text goldens relied on the platform default font (Times on macOS); they now pin Times New Roman and skip if its metrics differ from the reference machine |
+| Linux x64 | ✅ CI | ✅ CI (run 38864693788) | Unverified | No display in CI; text layout goldens skip (no Times New Roman) |
+| macOS | ✅ CI | ✅ CI (run 38864693788) | Unverified | Layout text goldens pin Times New Roman and skip if its metrics differ from the reference machine |
 
 ## Known limitations
 
