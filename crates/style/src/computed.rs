@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use crate::properties::{
     BorderStyle, BorderWidth, Display, FamilyName, FontSize, FontStyle, FontWeight, LineHeight,
-    Longhand, Overflow, TextAlign, Value,
+    ListStyleType, Longhand, Overflow, TextAlign, Value,
 };
 use crate::values::{ColorValue, Length, LengthPercentage, LengthPercentageAuto, LengthUnit, Rgba};
 
@@ -42,6 +42,7 @@ pub struct ComputedStyle {
     pub font_family: Rc<[FamilyName]>,
     pub line_height: ComputedLineHeight,
     pub text_align: TextAlign,
+    pub list_style_type: ListStyleType,
     pub overflow_x: Overflow,
     pub overflow_y: Overflow,
     pub width: ComputedLengthAuto,
@@ -80,6 +81,7 @@ impl ComputedStyle {
             font_family: vec![FamilyName::Named(INITIAL_FONT_FAMILY.into())].into(),
             line_height: ComputedLineHeight::Normal,
             text_align: TextAlign::Start,
+            list_style_type: ListStyleType::Disc,
             overflow_x: Overflow::Visible,
             overflow_y: Overflow::Visible,
             width: ComputedLengthAuto::Auto,
@@ -103,6 +105,7 @@ impl ComputedStyle {
             font_family: parent.font_family.clone(),
             line_height: parent.line_height,
             text_align: parent.text_align,
+            list_style_type: parent.list_style_type,
             ..Self::initial()
         }
     }
@@ -258,6 +261,7 @@ pub fn compute(
     simple!(display, Longhand::Display, Display);
     simple!(font_style, Longhand::FontStyle, FontStyle);
     simple!(text_align, Longhand::TextAlign, TextAlign);
+    simple!(list_style_type, Longhand::ListStyleType, ListStyleType);
     simple!(overflow_x, Longhand::OverflowX, Overflow);
     simple!(overflow_y, Longhand::OverflowY, Overflow);
 

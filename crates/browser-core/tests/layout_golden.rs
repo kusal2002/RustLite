@@ -1,4 +1,5 @@
-//! Golden geometry tests: `tests/layout/<name>.html` laid out in an 800×600
+//! Golden geometry tests: `tests/layout/<name>.html` loaded into a `Page`
+//! (parse, images relative to `tests/layout/`, style, layout) in an 800×600
 //! viewport must produce the border boxes in `tests/layout/<name>.boxes`,
 //! which a reference browser produced with `getBoundingClientRect()` (see
 //! `scripts/oracle/server.py`, `/layout` page).
@@ -14,8 +15,10 @@
 use std::fs;
 use std::path::PathBuf;
 
+use rustlite_browser_core::Page;
 use rustlite_fonts::{Family, FontContext};
-use rustlite_layout::{dump_geometry, layout_document};
+use rustlite_layout::dump_geometry;
+use rustlite_paint::Size;
 
 /// Fixtures where RustLite intentionally differs from the reference browser,
 /// with the reason. Unexpected passes fail so stale entries get removed.
@@ -127,12 +130,11 @@ fn layout_golden_fixtures_match_reference_browser() {
         let expected = fs::read_to_string(path.with_extension("boxes"))
             .unwrap_or_else(|_| panic!("{name}: missing .boxes (run the oracle)"));
 
-        let parsed = rustlite_html::parse_document(&source);
-        let doc = &parsed.document;
-        let stylist = rustlite_style::stylist_for(doc);
-        let (styles, _) = rustlite_style::compute_styles(doc, &stylist, (800.0, 600.0));
-        let tree = layout_document(doc, &styles, &mut fonts, (800.0, 600.0));
-        let actual = dump_geometry(doc, &tree);
+        // The full page pipeline: parse, load images, style, lay out.
+        let mut page = Page::with_fonts(Size::new(800, 600), FontContext::with_system_fonts());
+        page.load_html_with_base(format!("test:{name}"), &source, Some(&fixtures_dir()));
+        let (doc, tree) = page.layout().expect("HTML content");
+        let actual = dump_geometry(doc, tree);
         ran += 1;
 
         let diffs = compare(&expected, &actual, tolerance);

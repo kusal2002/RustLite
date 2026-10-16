@@ -8,9 +8,11 @@
 mod color;
 mod display_list;
 mod geometry;
+mod image;
 mod text;
 
 pub use color::Color;
 pub use display_list::{DisplayItem, DisplayList};
 pub use geometry::{Point, Rect, Size};
+pub use image::ImageData;
 pub use text::{FontId, GlyphBitmap, GlyphRasterizer, GlyphRun, NoGlyphs, PositionedGlyph};

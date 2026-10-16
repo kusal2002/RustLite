@@ -96,6 +96,10 @@ pub(crate) fn make_absolute(root: &mut BlockBox, origin_x: f32, origin_y: f32) {
         b.rect.x += ox;
         b.rect.y += oy;
         let content = b.content_rect();
+        if let Some(m) = &mut b.marker {
+            m.x += content.x;
+            m.baseline += content.y;
+        }
         match &mut b.children {
             BlockChildren::Blocks(kids) => {
                 for k in kids.iter_mut() {
@@ -136,7 +140,7 @@ pub(crate) fn collect_rects(root: &BlockBox, out: &mut HashMap<NodeId, RectF>) {
                                     .or_insert(f.rect);
                             }
                         }
-                        InlineItem::LineBreak { node, .. } => {
+                        InlineItem::LineBreak { node, .. } | InlineItem::Atomic { node, .. } => {
                             out.insert(*node, f.rect);
                         }
                     }

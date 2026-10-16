@@ -52,7 +52,7 @@ pub struct RunReport {
 struct App {
     options: Options,
     /// (url, source) of the file to open in the first window.
-    initial: Option<(String, String)>,
+    initial: Option<LocalDocument>,
     window: Option<BrowserWindow>,
     final_stats: Option<FrameStats>,
     error: Option<AppError>,
@@ -148,8 +148,7 @@ pub fn render_headless(options: &Options, path: &Path) -> Result<HeadlessReport,
     let toolbar = ToolbarLayout::new(size.width, 1.0);
     let mut page = Page::new(frame::content_size(size, &toolbar));
     if let Some(file) = &options.open {
-        let (url, source) = read_local_html(file)?;
-        page.load_html(url, &source);
+        read_local_html(file)?.load_into(&mut page);
     }
     let mut list = DisplayList::new();
     let chrome = ChromeState {
@@ -232,16 +231,31 @@ pub fn dump_layout(path: &Path, viewport: rustlite_paint::Size) -> Result<String
 
 /// Reads a local HTML file named explicitly on the command line into a page.
 fn load_local_file(path: &Path, viewport: rustlite_paint::Size) -> Result<Page, AppError> {
-    let (url, source) = read_local_html(path)?;
     let mut page = Page::new(viewport);
-    page.load_html(url, &source);
+    read_local_html(path)?.load_into(&mut page);
     Ok(page)
 }
 
-/// Reads a local HTML file named explicitly by the user. Returns (url, source).
+/// A local HTML file named explicitly by the user, read into memory.
+#[derive(Debug)]
+pub struct LocalDocument {
+    pub url: String,
+    pub source: String,
+    /// Directory images may be loaded from (see `browser_core::images`).
+    pub base_dir: Option<std::path::PathBuf>,
+}
+
+impl LocalDocument {
+    pub fn load_into(&self, page: &mut Page) {
+        page.load_html_with_base(self.url.clone(), &self.source, self.base_dir.as_deref());
+    }
+}
+
+/// Reads a local HTML file named explicitly by the user.
 ///
-/// This is not navigation: pages cannot cause local files to be read.
-fn read_local_html(path: &Path) -> Result<(String, String), AppError> {
+/// This is not navigation: pages cannot cause local files to be read; they
+/// can only load images from inside this file's directory.
+fn read_local_html(path: &Path) -> Result<LocalDocument, AppError> {
     let display = path.display().to_string();
     let input_error = |source| AppError::Input {
         path: display.clone(),
@@ -259,5 +273,12 @@ fn read_local_html(path: &Path) -> Result<(String, String), AppError> {
     // Encoding sniffing arrives with networking; until then input is UTF-8,
     // with invalid sequences replaced (as a UTF-8 decoder in a browser would).
     let source = String::from_utf8_lossy(&bytes).into_owned();
-    Ok((format!("file:{display}"), source))
+    let base_dir = std::fs::canonicalize(path)
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf));
+    Ok(LocalDocument {
+        url: format!("file:{display}"),
+        source,
+        base_dir,
+    })
 }

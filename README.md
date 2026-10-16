@@ -3,10 +3,11 @@
 An original, cross-platform web browser engine written in Rust: HTML, DOM, CSS,
 layout, paint and rendering are RustLite code, not a wrapped engine.
 
-**Status:** Phase 4. RustLite opens and renders local HTML files with its own
-HTML parser, CSS engine, block/inline layout and CPU renderer (each verified
-against Chromium on golden fixtures). Normal flow only; no images, floats,
-flex/grid, networking or JavaScript yet. See [docs/roadmap.md](docs/roadmap.md) and
+**Status:** Phase 5. RustLite opens and renders local HTML files with its own
+HTML parser, CSS engine, block/inline layout, glyph rasterizer and CPU
+renderer (each verified against Chromium on golden fixtures), including local
+images and list markers. Normal flow only; no floats, flex/grid, networking or
+JavaScript yet. See [docs/roadmap.md](docs/roadmap.md) and
 [docs/progress.md](docs/progress.md).
 
 ## Build and run

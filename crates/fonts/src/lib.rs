@@ -8,6 +8,8 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
+mod raster;
+
 use rustlite_paint::{FontId, GlyphBitmap, GlyphRasterizer};
 
 /// A family in a CSS `font-family` list.
@@ -70,7 +72,6 @@ struct Face {
     ascent: f32,
     descent: f32,
     line_gap: f32,
-    raster: Option<fontdue::Font>,
 }
 
 /// Candidate families for each generic, in preference order. The first one
@@ -223,7 +224,6 @@ impl FontContext {
             line_gap: f32::from(parsed.line_gap()),
             data: data.clone(),
             index,
-            raster: None,
         };
         let fid = FontId(u32::try_from(self.faces.len()).ok()?);
         self.faces.push(face);
@@ -422,32 +422,13 @@ impl GlyphRasterizer for FontContext {
         if self.glyph_cache.len() >= GLYPH_CACHE_LIMIT {
             self.glyph_cache.clear();
         }
-        let face = self.faces.get_mut(font.0 as usize)?;
-        if face.raster.is_none() {
-            let settings = fontdue::FontSettings {
-                collection_index: face.index,
-                ..fontdue::FontSettings::default()
-            };
-            match fontdue::Font::from_bytes(&*face.data, settings) {
-                Ok(f) => face.raster = Some(f),
-                Err(e) => {
-                    tracing::warn!(error = e, "font cannot be rasterized");
-                    self.glyph_cache.insert(key, None);
-                    return None;
-                }
-            }
-        }
-        let raster = face.raster.as_ref()?;
-        let (m, coverage) = raster.rasterize_indexed(glyph, size);
-        let bitmap = (m.width > 0 && m.height > 0).then(|| {
-            Rc::new(GlyphBitmap {
-                width: m.width as u32,
-                height: m.height as u32,
-                left: m.xmin,
-                top: -(m.ymin + m.height as i32),
-                coverage,
-            })
-        });
+        let face = self.faces.get(font.0 as usize)?;
+        // Parsing only reads the table directory; the glyph itself is decoded
+        // on demand, so nothing per-face stays resident besides the file data.
+        let bitmap = ttf_parser::Face::parse(&face.data, face.index)
+            .ok()
+            .and_then(|parsed| raster::rasterize(&parsed, glyph, size))
+            .map(Rc::new);
         self.glyph_cache.insert(key, bitmap.clone());
         bitmap
     }
@@ -523,6 +504,23 @@ mod tests {
         assert!(bitmap.top < 0, "glyph sits above the baseline");
         let again = ctx.rasterize(seg.font, seg.glyphs[0].id, 24.0).unwrap();
         assert!(Rc::ptr_eq(&bitmap, &again));
+    }
+
+    #[test]
+    fn rasterized_o_has_solid_ink_and_an_empty_counter() {
+        let Some(mut ctx) = system() else { return };
+        let font = ctx.select(&[Family::SansSerif], 400, false).unwrap();
+        let seg = &ctx.shape(font, 400, false, 64.0, "O")[0];
+        let b = ctx.rasterize(seg.font, seg.glyphs[0].id, 64.0).unwrap();
+        let at = |x: u32, y: u32| b.coverage[(y * b.width + x) as usize];
+        let (cx, cy) = (b.width / 2, b.height / 2);
+        assert_eq!(at(cx, cy), 0, "counter of O must be empty");
+        // Scanning left from the center along the middle row hits full ink.
+        let max_ink = (0..cx).map(|x| at(x, cy)).max().unwrap();
+        assert_eq!(max_ink, 255);
+        // Corners of the bounding box are outside the round glyph.
+        assert_eq!(at(0, 0), 0);
+        assert_eq!(at(b.width - 1, b.height - 1), 0);
     }
 
     #[test]

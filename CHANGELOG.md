@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added — 2026-10-16 (Phase 5)
+- On-demand glyph rasterizer in `rustlite-fonts` (fontdue removed; ADR-0003):
+  sample-page memory 73.6 → 23.9 MB.
+- `list-style-type` / `list-style`, UA list styles, outside list markers with
+  disc/circle/square/decimal/alpha/roman counters, `<ol start>`, `<li value>`.
+- Local images: PNG/JPEG/GIF decoding with limits, document-directory access
+  policy, `width`/`height` presentational hints, replaced-element sizing,
+  inline atomic and block images, bilinear image drawing.
+- Dashed, dotted and double border painting.
+- Layout goldens run through the full page pipeline (moved to
+  `browser-core/tests`); two image fixtures match Chromium 152.
+
 ### Added — 2026-10-16 (Phase 4)
 - `rustlite-fonts`: system font discovery, CSS-style face selection,
   per-character fallback, rustybuzz shaping, fontdue glyph rasterization with a

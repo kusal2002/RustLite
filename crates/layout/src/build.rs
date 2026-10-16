@@ -4,10 +4,12 @@
 use std::rc::Rc;
 
 use rustlite_dom::{Document, NodeData, NodeId};
-use rustlite_style::properties::Display;
+use rustlite_style::properties::{Display, ListStyleType};
 use rustlite_style::{ComputedStyle, ComputedStyles};
 
-use crate::{BlockBox, BlockChildren, Edges, InlineContent, InlineItem, RectF};
+use crate::{
+    BlockBox, BlockChildren, Edges, Images, InlineContent, InlineItem, RectF, ReplacedContent,
+};
 
 /// Nesting beyond this many block boxes is flattened into inline content of
 /// the deepest allowed block. Layout and paint recurse per block level, so
@@ -40,11 +42,94 @@ pub(crate) fn new_block(
         border: Edges::default(),
         padding: Edges::default(),
         margin: Edges::default(),
+        marker: None,
+        replaced: None,
     }
 }
 
+/// Marker text for a list item (CSS Lists 3 §3, counter styles from CSS
+/// Counter Styles 3 §6), including the trailing space browsers render.
+pub(crate) fn marker_text(ty: ListStyleType, ordinal: i64) -> Option<String> {
+    fn alphabetic(mut n: i64, upper: bool) -> Option<String> {
+        if n < 1 {
+            return None;
+        }
+        let mut chars = Vec::new();
+        while n > 0 {
+            n -= 1;
+            let base = if upper { b'A' } else { b'a' };
+            // n % 26 is in 0..26, so the cast cannot truncate.
+            chars.push((base + (n % 26) as u8) as char);
+            n /= 26;
+        }
+        Some(chars.into_iter().rev().collect())
+    }
+    fn roman(n: i64, upper: bool) -> Option<String> {
+        if !(1..=3999).contains(&n) {
+            return None;
+        }
+        const TABLE: [(i64, &str); 13] = [
+            (1000, "m"),
+            (900, "cm"),
+            (500, "d"),
+            (400, "cd"),
+            (100, "c"),
+            (90, "xc"),
+            (50, "l"),
+            (40, "xl"),
+            (10, "x"),
+            (9, "ix"),
+            (5, "v"),
+            (4, "iv"),
+            (1, "i"),
+        ];
+        let mut n = n;
+        let mut s = String::new();
+        for (value, digits) in TABLE {
+            while n >= value {
+                s.push_str(digits);
+                n -= value;
+            }
+        }
+        Some(if upper { s.to_ascii_uppercase() } else { s })
+    }
+    let numbered =
+        |text: Option<String>| format!("{}. ", text.unwrap_or_else(|| ordinal.to_string()));
+    Some(match ty {
+        ListStyleType::None => return None,
+        ListStyleType::Disc => "\u{2022} ".into(),
+        ListStyleType::Circle => "\u{25E6} ".into(),
+        ListStyleType::Square => "\u{25AA} ".into(),
+        ListStyleType::Decimal => numbered(None),
+        ListStyleType::LowerAlpha | ListStyleType::LowerLatin => {
+            numbered(alphabetic(ordinal, false))
+        }
+        ListStyleType::UpperAlpha | ListStyleType::UpperLatin => {
+            numbered(alphabetic(ordinal, true))
+        }
+        ListStyleType::LowerRoman => numbered(roman(ordinal, false)),
+        ListStyleType::UpperRoman => numbered(roman(ordinal, true)),
+    })
+}
+
 /// Builds the box tree rooted at the document element.
-pub(crate) fn build_box_tree(doc: &Document, styles: &ComputedStyles) -> Option<BlockBox> {
+/// Everything box construction reads.
+pub(crate) struct Inputs<'a> {
+    doc: &'a Document,
+    styles: &'a ComputedStyles,
+    images: &'a Images,
+}
+
+pub(crate) fn build_box_tree(
+    doc: &Document,
+    styles: &ComputedStyles,
+    images: &Images,
+) -> Option<BlockBox> {
+    let inputs = Inputs {
+        doc,
+        styles,
+        images,
+    };
     let root = doc
         .children(doc.root())
         .find(|&n| doc.element(n).is_some())?;
@@ -52,20 +137,49 @@ pub(crate) fn build_box_tree(doc: &Document, styles: &ComputedStyles) -> Option<
     if style.display == Display::None {
         return None;
     }
-    Some(build_block(doc, styles, root, style, 0))
+    Some(build_block(&inputs, root, style, 0, 1))
 }
 
 fn build_block(
-    doc: &Document,
-    styles: &ComputedStyles,
+    inputs: &Inputs<'_>,
     node: NodeId,
     style: Rc<ComputedStyle>,
     depth: usize,
+    ordinal: i64,
 ) -> BlockBox {
+    let (doc, images) = (inputs.doc, inputs.images);
+    if doc.is_element_named(node, "img") {
+        let mut block = new_block(Some(node), style, BlockChildren::Empty);
+        block.replaced = Some(ReplacedContent {
+            image: images.get(&node).cloned(),
+        });
+        return block;
+    }
     let mut children = Vec::new();
-    collect(doc, styles, node, &style, &[], depth, &mut children);
+    collect(inputs, node, &style, &[], depth, &mut children);
     let content = finish_children(children, &style);
-    new_block(Some(node), style, content)
+    let marker = (style.display == Display::ListItem)
+        .then(|| marker_text(style.list_style_type, ordinal))
+        .flatten();
+    let mut block = new_block(Some(node), style, content);
+    block.marker = marker.map(|text| crate::Marker {
+        text,
+        x: 0.0,
+        baseline: 0.0,
+        runs: Vec::new(),
+    });
+    block
+}
+
+/// The first list-item ordinal among `parent`'s children: `<ol start>`, else 1.
+fn list_start(doc: &Document, parent: NodeId) -> i64 {
+    if doc.is_element_named(parent, "ol") {
+        doc.attribute(parent, "start")
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(1)
+    } else {
+        1
+    }
 }
 
 fn is_collapsible_whitespace(item: &InlineItem) -> bool {
@@ -73,7 +187,7 @@ fn is_collapsible_whitespace(item: &InlineItem) -> bool {
         InlineItem::Text { text, .. } => text
             .chars()
             .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0C')),
-        InlineItem::LineBreak { .. } => false,
+        InlineItem::LineBreak { .. } | InlineItem::Atomic { .. } => false,
     }
 }
 
@@ -143,6 +257,7 @@ fn anonymous_style(parent: &ComputedStyle) -> Rc<ComputedStyle> {
         font_family: parent.font_family.clone(),
         line_height: parent.line_height,
         text_align: parent.text_align,
+        list_style_type: parent.list_style_type,
         ..initial
     })
 }
@@ -156,14 +271,14 @@ const MAX_INLINE_ANCESTORS: usize = 32;
 /// stack, so arbitrarily deep inline nesting cannot overflow the call stack;
 /// only block-level children recurse, bounded by [`MAX_BLOCK_DEPTH`].
 fn collect(
-    doc: &Document,
-    styles: &ComputedStyles,
+    inputs: &Inputs<'_>,
     parent: NodeId,
     parent_style: &Rc<ComputedStyle>,
     inline_ancestors: &[NodeId],
     depth: usize,
     out: &mut Vec<Child>,
 ) {
+    let (doc, styles, images) = (inputs.doc, inputs.styles, inputs.images);
     struct Frame {
         next: Option<NodeId>,
         style: Rc<ComputedStyle>,
@@ -174,6 +289,9 @@ fn collect(
         style: parent_style.clone(),
         ancestors: inline_ancestors.into(),
     }];
+    // Simplified list-item counter (CSS Lists 3 §4.6): increments per list
+    // item child; `<li value>` resets it.
+    let mut counter = list_start(doc, parent);
     while let Some(frame) = stack.last_mut() {
         let Some(child) = frame.next else {
             stack.pop();
@@ -199,6 +317,14 @@ fn collect(
                         ancestors: frame_ancestors,
                     }),
                     d if !is_block_level(d) || depth >= MAX_BLOCK_DEPTH => {
+                        if &*e.name == "img" {
+                            out.push(Child::Inline(InlineItem::Atomic {
+                                node: child,
+                                style,
+                                image: images.get(&child).cloned(),
+                            }));
+                            continue;
+                        }
                         if &*e.name == "br" {
                             out.push(Child::Inline(InlineItem::LineBreak { node: child, style }));
                             continue;
@@ -212,13 +338,23 @@ fn collect(
                             ancestors: chain.into(),
                         });
                     }
-                    _ => out.push(Child::Block(build_block(
-                        doc,
-                        styles,
-                        child,
-                        style,
-                        depth + 1,
-                    ))),
+                    d => {
+                        let mut ordinal = 0;
+                        if d == Display::ListItem {
+                            ordinal = e
+                                .attribute("value")
+                                .and_then(|v| v.trim().parse().ok())
+                                .unwrap_or(counter);
+                            counter = ordinal + 1;
+                        }
+                        out.push(Child::Block(build_block(
+                            inputs,
+                            child,
+                            style,
+                            depth + 1,
+                            ordinal,
+                        )));
+                    }
                 }
             }
             _ => {}

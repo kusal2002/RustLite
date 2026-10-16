@@ -6,8 +6,11 @@
 //! a viewport change invalidates styles (viewport units) and layout, a scroll
 //! only repaints.
 
+pub mod images;
+
 use rustlite_dom::Document;
 use rustlite_fonts::FontContext;
+use rustlite_layout::Images;
 use rustlite_layout::LayoutTree;
 use rustlite_paint::{Color, DisplayList, GlyphRasterizer, NoGlyphs, Rect, Size};
 use rustlite_style::{ComputedStyles, Stylist};
@@ -20,6 +23,8 @@ pub struct HtmlDocument {
     /// Number of HTML parse errors (repairs) encountered.
     pub parse_errors: usize,
     pub stylist: Stylist,
+    /// Decoded `<img>` resources.
+    pub images: Images,
     styles: Option<ComputedStyles>,
     layout: Option<LayoutTree>,
 }
@@ -186,7 +191,13 @@ impl Page {
                 self.viewport.height as f32 / self.device_scale,
             );
             let styles = doc.styles.as_ref()?;
-            let tree = rustlite_layout::layout_document(&doc.dom, styles, fonts, viewport);
+            let tree = rustlite_layout::layout_document_with_images(
+                &doc.dom,
+                styles,
+                fonts,
+                &doc.images,
+                viewport,
+            );
             tracing::info!(
                 document_height = tree.document_height,
                 layout_ms = start.elapsed().as_secs_f64() * 1000.0,
@@ -207,8 +218,20 @@ impl Page {
         self.content.url()
     }
 
-    /// Replaces the page content with `source` parsed as HTML.
+    /// Replaces the page content with `source` parsed as HTML. Subresources
+    /// are not loaded (see [`Page::load_html_with_base`]).
     pub fn load_html(&mut self, url: impl Into<String>, source: &str) {
+        self.load_html_with_base(url, source, None);
+    }
+
+    /// Replaces the page content with `source` parsed as HTML, loading
+    /// `<img>` files relative to `base_dir` (a local document's directory).
+    pub fn load_html_with_base(
+        &mut self,
+        url: impl Into<String>,
+        source: &str,
+        base_dir: Option<&std::path::Path>,
+    ) {
         let url = url.into();
         let start = std::time::Instant::now();
         let out = rustlite_html::parse_document(source);
@@ -221,11 +244,25 @@ impl Page {
             "HTML document parsed"
         );
         let stylist = rustlite_style::stylist_for(&out.document);
+        let images = match base_dir {
+            Some(dir) => {
+                let start = std::time::Instant::now();
+                let images = images::load_images(&out.document, dir);
+                tracing::info!(
+                    count = images.len(),
+                    image_ms = start.elapsed().as_secs_f64() * 1000.0,
+                    "images loaded"
+                );
+                images
+            }
+            None => Images::new(),
+        };
         self.content = Content::Html(Box::new(HtmlDocument {
             url,
             dom: out.document,
             parse_errors: out.error_count,
             stylist,
+            images,
             styles: None,
             layout: None,
         }));

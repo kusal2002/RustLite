@@ -1,4 +1,6 @@
-use crate::{Color, GlyphRun, Rect};
+use std::rc::Rc;
+
+use crate::{Color, GlyphRun, ImageData, Rect};
 
 /// One drawing command. Items are painted in list order (painter's algorithm).
 #[derive(Debug, Clone, PartialEq)]
@@ -13,6 +15,8 @@ pub enum DisplayItem {
         color: Color,
         run: GlyphRun,
     },
+    /// Draw `image` scaled to fill `rect`.
+    Image { rect: Rect, image: Rc<ImageData> },
     /// Fill `rect` with `color`.
     SolidRect { rect: Rect, color: Color },
     /// Stroke the inside edge of `rect` with a uniform border of `width` pixels.
@@ -88,6 +92,10 @@ impl DisplayList {
                 color: *color,
                 // Cheap: the glyph array is reference-counted.
                 run: run.clone(),
+            },
+            DisplayItem::Image { rect, image } => DisplayItem::Image {
+                rect: shift(*rect),
+                image: image.clone(),
             },
             DisplayItem::SolidRect { rect, color } => DisplayItem::SolidRect {
                 rect: shift(*rect),

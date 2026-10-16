@@ -165,6 +165,20 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, page, "text/html; charset=utf-8")
         elif self.path == "/layout":
             self._send(200, LAYOUT_PAGE, "text/html; charset=utf-8")
+        elif self.path.startswith("/assets/"):
+            # Layout fixtures reference images as `assets/<name>`; srcdoc frames
+            # resolve that against this page's URL.
+            name = self.path[len("/assets/"):]
+            path = ROOT / "tests" / "layout" / "assets" / name
+            if not re.fullmatch(r"[a-z0-9-]+\.(png|jpg|gif)", name) or not path.is_file():
+                self._send(404, "not found")
+                return
+            data = path.read_bytes()
+            self.send_response(200)
+            self.send_header("content-type", "image/png" if name.endswith(".png") else "application/octet-stream")
+            self.send_header("content-length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
         elif self.path.endswith("/fixtures") and self.path.strip("/").split("/")[0] in SUITES:
             directory, _ = SUITES[self.path.strip("/").split("/")[0]]
             fixtures = [

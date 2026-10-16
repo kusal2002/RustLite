@@ -85,6 +85,18 @@ fn establishes_bfc(style: &ComputedStyle, is_root: bool) -> bool {
         )
 }
 
+/// The first line baseline inside `children`, relative to their parent's
+/// content box (valid during layout, before coordinates become absolute).
+fn first_baseline(children: &BlockChildren) -> Option<f32> {
+    match children {
+        BlockChildren::Inline(content) => inline::first_baseline(content),
+        BlockChildren::Blocks(kids) => kids.iter().find_map(|k| {
+            first_baseline(&k.children).map(|b| k.rect.y + k.border.top + k.padding.top + b)
+        }),
+        BlockChildren::Empty => None,
+    }
+}
+
 /// Lays out the root box in the initial containing block (the viewport).
 pub(crate) fn layout_root(
     root: &mut BlockBox,
@@ -123,7 +135,12 @@ fn layout_block_inner(
     // Horizontal: margin-left + border + padding + width + ... = cb_width.
     let frame = b.border.horizontal() + b.padding.horizontal();
     let (mut ml, mut mr) = (margin(3), margin(1));
-    let width = match length_auto(s.width, Some(cb_width)) {
+    // Replaced elements size from their content, not from the containing block.
+    let replaced_size = b
+        .replaced
+        .as_ref()
+        .map(|r| crate::replaced::content_size(&s, r.image.as_deref(), cb_width));
+    let width = match length_auto(s.width, Some(cb_width)).or(replaced_size.map(|r| r.0)) {
         None => {
             let w = cb_width - ml.unwrap_or(0.0) - mr.unwrap_or(0.0) - frame;
             ml.get_or_insert(0.0);
@@ -158,7 +175,7 @@ fn layout_block_inner(
     b.rect.x = b.margin.left;
     b.rect.width = width + frame;
 
-    let specified_height = length_auto(s.height, cb_height);
+    let specified_height = length_auto(s.height, cb_height).or(replaced_size.map(|r| r.1));
     let bfc = establishes_bfc(&s, is_root);
     let escape_top = !bfc && b.border.top == 0.0 && b.padding.top == 0.0;
     let escape_bottom =
@@ -229,6 +246,15 @@ fn layout_block_inner(
             0.0
         }
     };
+
+    if let Some(marker) = &mut b.marker {
+        let (runs, marker_width, ascent) = inline::shape_text(&marker.text, &s, ctx.fonts);
+        // Outside marker: ends where the content box starts, on the first
+        // line's baseline (or the font's ascent for an item without lines).
+        marker.x = -marker_width;
+        marker.baseline = first_baseline(&b.children).unwrap_or(ascent);
+        marker.runs = runs;
+    }
 
     let height = specified_height.unwrap_or(content_height).max(0.0);
     // A box with a non-zero height cannot have margins collapsing through it.

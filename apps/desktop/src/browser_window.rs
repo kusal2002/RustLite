@@ -72,7 +72,7 @@ impl BrowserWindow {
         size: Size,
         debug_overlay: bool,
         exit_after_frames: Option<u64>,
-        initial: Option<(String, String)>,
+        initial: Option<crate::app::LocalDocument>,
     ) -> Result<Self, WindowError> {
         let attributes = Window::default_attributes()
             .with_title("RustLite")
@@ -94,8 +94,8 @@ impl BrowserWindow {
 
         let mut page = Page::new(viewport);
         page.set_device_scale(window.scale_factor() as f32);
-        if let Some((url, source)) = initial {
-            page.load_html(url, &source);
+        if let Some(doc) = initial {
+            doc.load_into(&mut page);
         }
         let title = match page.title().filter(|t| !t.is_empty()) {
             Some(t) => format!("{t} — RustLite"),

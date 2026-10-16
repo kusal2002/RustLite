@@ -36,6 +36,10 @@ Performance targets are **hypotheses** until measured on a defined setup.
 | 2026-10-16 | Window with sample page, 1024×768 | frame time mean / p95 / max over 60 frames | 3.47 / 2.93 / 130 ms (max = first frame: fonts + layout + glyphs) | `--exit-after-frames 60` log |
 | 2026-10-16 | Window with sample page, 4 s after launch | working set / private bytes | 73.6 MB / 62.7 MB | PowerShell `Get-Process`. Up from 16.8 MB blank: font files are copied to the heap and fontdue parses whole faces (incl. the large Sinhala fallback face) |
 | 2026-10-16 | Release binary size | bytes | 2,202,624 (2.1 MiB; was 1.06 MiB before fonts/layout) | file size |
+| 2026-10-16 | Window with sample page after replacing fontdue (ADR-0003) | working set / private bytes | 23.9 MB / 12.1 MB (was 73.6 / 62.7 MB) | PowerShell `Get-Process`, 4 s after launch |
+| 2026-10-16 | Window with extended sample page (lists, 2 images, patterned borders) | working set / private bytes | 24.4 MB / 12.2 MB | same |
+| 2026-10-16 | Extended sample page, 900×1000 headless | image load / layout / raster | 1.0 / 14.1 / 66.4 ms (raster includes first-time glyphs) | `rustlite --headless` log, release |
+| 2026-10-16 | Release binary size with `image` (png/jpeg/gif) | bytes | 2,661,376 (2.5 MiB) | file size |
 | 2026-10-16 | Style computation, same page (300,005 elements, 160 rules incl. UA), 800×600 | style time (3 runs) | 71.4 / 88.1 / 71.7 ms; 299,987 elements served by style sharing | `rustlite --dump-style` `style_ms` log field, release build. Best case for sharing: the page repeats one structure 20,000 times |
 
 Single runs; no variance analysis yet. Criterion benchmarks are not set up yet; parse timings come from the
@@ -55,7 +59,9 @@ Single runs; no variance analysis yet. Criterion benchmarks are not set up yet; 
   only plausible rules; identical siblings share one `Rc<ComputedStyle>`.
 - Glyph bitmaps are cached (bounded at 4,096 entries); font selection and
   fallback lookups are cached per context.
-- Known costs to revisit: font data copied per face and eager fontdue parsing
-  (the main memory cost now); tag/attribute names are owned strings (no
+- Glyphs are decoded one at a time from the font file (no whole-face parsing).
+- Decoded images are shared between elements that use the same file.
+- Known costs to revisit: font data is copied per face in use; images decode
+  on the UI thread at load; tag/attribute names are owned strings (no
   interning); named-reference lookup is a linear scan; the style-sharing key
   clones the matched-rule list; `--dump-style` output is slow for huge pages.

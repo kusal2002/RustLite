@@ -64,6 +64,11 @@ pub fn rasterize(
                     stats.pixels_written += canvas.blend_coverage(ox, oy, &bitmap, color, clip);
                 }
             }
+            DisplayItem::Image { rect, ref image } => {
+                if let Some(clip) = clip {
+                    stats.pixels_written += canvas.draw_image(rect, image, clip);
+                }
+            }
             DisplayItem::SolidRect { rect, color } => {
                 if let Some(target) = clip.and_then(|c| c.intersect(rect)) {
                     stats.pixels_written += canvas.fill(target, color);

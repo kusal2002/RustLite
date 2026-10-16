@@ -1,4 +1,4 @@
-use rustlite_paint::{Color, GlyphBitmap, Rect, Size};
+use rustlite_paint::{Color, GlyphBitmap, ImageData, Rect, Size};
 
 /// Errors constructing a canvas or framebuffer.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -106,6 +106,74 @@ impl<'a> Canvas<'a> {
             }
         }
         (w * h) as u64
+    }
+
+    /// Draws `image` scaled to `dest` with bilinear filtering and alpha
+    /// blending, restricted to `clip`. Returns the number of pixels touched.
+    ///
+    /// Bilinear sampling is accurate for upscaling and mild downscaling; strong
+    /// downscaling aliases (no mipmaps yet).
+    pub fn draw_image(&mut self, dest: Rect, image: &ImageData, clip: Rect) -> u64 {
+        let Some(area) = self
+            .bounds()
+            .intersect(clip)
+            .and_then(|c| c.intersect(dest))
+        else {
+            return 0;
+        };
+        let (iw, ih) = (image.width as usize, image.height as usize);
+        let sx = image.width as f32 / dest.width as f32;
+        let sy = image.height as f32 / dest.height as f32;
+        let texel = |x: usize, y: usize| {
+            let i = (y * iw + x) * 4;
+            [
+                f32::from(image.rgba[i]),
+                f32::from(image.rgba[i + 1]),
+                f32::from(image.rgba[i + 2]),
+                f32::from(image.rgba[i + 3]),
+            ]
+        };
+        let stride = self.width as usize;
+        let mut touched = 0;
+        // `area` lies inside both the canvas and `dest`, so indices are in range.
+        for row in 0..area.height as usize {
+            let cy = area.y as usize + row;
+            // Sample at pixel centers, mapped into image space.
+            let v = ((cy as i64 - i64::from(dest.y)) as f32 + 0.5) * sy - 0.5;
+            let v = v.clamp(0.0, (ih - 1) as f32);
+            let (y0, fy) = (v.floor() as usize, v - v.floor());
+            let y1 = (y0 + 1).min(ih - 1);
+            for col in 0..area.width as usize {
+                let cx = area.x as usize + col;
+                let u = ((cx as i64 - i64::from(dest.x)) as f32 + 0.5) * sx - 0.5;
+                let u = u.clamp(0.0, (iw - 1) as f32);
+                let (x0, fx) = (u.floor() as usize, u - u.floor());
+                let x1 = (x0 + 1).min(iw - 1);
+                let (a, b, c, d) = (texel(x0, y0), texel(x1, y0), texel(x0, y1), texel(x1, y1));
+                let mut p = [0.0f32; 4];
+                for k in 0..4 {
+                    let top = a[k] + (b[k] - a[k]) * fx;
+                    let bottom = c[k] + (d[k] - c[k]) * fx;
+                    p[k] = top + (bottom - top) * fy;
+                }
+                let alpha = p[3] / 255.0;
+                if alpha <= 0.0 {
+                    continue;
+                }
+                let px = &mut self.pixels[cy * stride + cx];
+                let dst = [
+                    ((*px >> 16) & 0xFF) as f32,
+                    ((*px >> 8) & 0xFF) as f32,
+                    (*px & 0xFF) as f32,
+                ];
+                let mix = |s: f32, d: f32| {
+                    (s * alpha + d * (1.0 - alpha)).round().clamp(0.0, 255.0) as u32
+                };
+                *px = (mix(p[0], dst[0]) << 16) | (mix(p[1], dst[1]) << 8) | mix(p[2], dst[2]);
+                touched += 1;
+            }
+        }
+        touched
     }
 
     /// Blends `color` through a coverage mask whose top-left corner is at
@@ -231,5 +299,58 @@ mod tests {
         let c = Color::rgb(0x12, 0x34, 0x56);
         assert_eq!(pack_rgb(c), 0x0012_3456);
         assert_eq!(unpack_rgb(pack_rgb(c)), c);
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    fn image(w: u32, h: u32, pixels: &[[u8; 4]]) -> ImageData {
+        ImageData::new(w, h, pixels.concat()).unwrap()
+    }
+
+    #[test]
+    fn draws_scaled_image_with_nearest_corners() {
+        // 2x1 image: red, blue. Drawn at 4x2.
+        let img = image(2, 1, &[[255, 0, 0, 255], [0, 0, 255, 255]]);
+        let mut fb = Framebuffer::new(6, 3).unwrap();
+        let n = fb
+            .canvas()
+            .draw_image(Rect::new(1, 1, 4, 2), &img, Rect::new(0, 0, 6, 3));
+        assert_eq!(n, 8);
+        assert_eq!(fb.pixel(1, 1), Some(Color::rgb(255, 0, 0)));
+        assert_eq!(fb.pixel(4, 2), Some(Color::rgb(0, 0, 255)));
+        assert_eq!(
+            fb.pixel(0, 0),
+            Some(Color::rgb(0, 0, 0)),
+            "outside dest untouched"
+        );
+        // Middle pixels interpolate between red and blue.
+        let mid = fb.pixel(2, 1).unwrap();
+        assert!(mid.r > 0 && mid.b > 0, "{mid:?}");
+    }
+
+    #[test]
+    fn transparent_pixels_keep_the_background_and_clip_applies() {
+        let img = image(1, 1, &[[255, 255, 255, 0]]);
+        let mut fb = Framebuffer::new(2, 2).unwrap();
+        assert_eq!(
+            fb.canvas()
+                .draw_image(Rect::new(0, 0, 2, 2), &img, Rect::new(0, 0, 2, 2)),
+            0
+        );
+        let solid = image(1, 1, &[[9, 9, 9, 255]]);
+        let n = fb
+            .canvas()
+            .draw_image(Rect::new(0, 0, 2, 2), &solid, Rect::new(0, 0, 1, 1));
+        assert_eq!(n, 1);
+        assert_eq!(fb.pixel(1, 1), Some(Color::rgb(0, 0, 0)));
+    }
+
+    #[test]
+    fn rejects_inconsistent_image_data() {
+        assert!(ImageData::new(2, 2, vec![0; 15]).is_none());
+        assert!(ImageData::new(0, 2, vec![]).is_none());
     }
 }

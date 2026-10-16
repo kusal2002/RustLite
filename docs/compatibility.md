@@ -112,13 +112,14 @@ painting; canvas background propagation from `html`/`body`; device pixel ratio.
 | Area | Behavior today |
 |---|---|
 | Floats, `position`, flex, grid, tables | Laid out as ordinary blocks |
-| `inline-block`, replaced elements (`img`, form controls) | Treated as inline containers; images not loaded |
-| List markers | Not generated |
+| `inline-block`, form controls | Treated as inline containers |
+| Images | Local PNG/JPEG/GIF inside the document's directory; inline (baseline-aligned atomic) or block; `width`/`height` attributes as presentational hints; intrinsic ratio. No network/`data:`/SVG/WebP, no `object-fit`, broken images render nothing ([IMAGE-001](../research/specifications/IMAGE-001.md)) |
+| List markers | Outside markers for disc/circle/square/decimal/alpha/roman; `<ol start>`, `<li value>`; no `list-style-position: inside`, `list-style-image`, `reversed`, or `::marker` styling |
 | `white-space` other than `normal`, CJK/hyphen/UAX #14 break opportunities | Not supported (breaks only at spaces) |
 | Bidi, vertical text, `vertical-align` | Not supported |
 | Inline padding/borders/margins/backgrounds | Ignored |
 | `min-*`/`max-*` sizes, `box-sizing` | Not supported (content-box) |
-| Border styles other than solid | Painted solid |
+| Border styles | solid, dashed, dotted, double; groove/ridge/inset/outset painted solid (no 3D shading) |
 | Scrollbars | None drawn; the page scrolls with wheel/keys |
 | Nesting deeper than 200 block levels | Flattened into inline content (stack safety) |
 
@@ -128,7 +129,8 @@ System fonts via fontdb on all platforms; generic families map to the first
 installed of a per-platform list (e.g. serif → Times New Roman / Times /
 Liberation Serif / DejaVu Serif); per-character fallback keeps combining marks
 and Sinhala signs with their base; shaping with rustybuzz (kerning, ligatures);
-grayscale glyph rasterization without hinting (text looks softer than
-Chromium's). No `@font-face`, no color emoji tables.
+grayscale glyph rasterization without hinting by RustLite's own on-demand
+rasterizer ([ADR-0003](../research/decisions/ADR-0003-own-glyph-rasterizer.md);
+text looks softer than Chromium's). No `@font-face`, no color emoji tables.
 
 Networking and JavaScript are not implemented yet.

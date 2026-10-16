@@ -225,13 +225,59 @@ pub fn stylist_for(doc: &Document) -> Stylist {
 }
 
 /// Cascade sort key: origin and importance, then inline-ness, specificity, order.
+/// Presentational hints rank between user-agent and author normal declarations.
 fn precedence(origin: Origin, important: bool, inline: bool) -> u8 {
     match (origin, important) {
         (Origin::UserAgent, false) => 0,
-        (Origin::Author, false) => 1 + u8::from(inline),
-        (Origin::Author, true) => 3 + u8::from(inline),
-        (Origin::UserAgent, true) => 5,
+        (Origin::Author, false) => 2 + u8::from(inline),
+        (Origin::Author, true) => 4 + u8::from(inline),
+        (Origin::UserAgent, true) => 6,
     }
+}
+
+const HINT_PRECEDENCE: u8 = 1;
+
+/// HTML "rules for parsing dimension values" (simplified): a non-negative
+/// number with an optional `%`; trailing garbage after the number is ignored.
+fn parse_dimension(value: &str) -> Option<crate::values::LengthPercentage> {
+    use crate::values::{Length, LengthPercentage};
+    let v = value.trim_start();
+    let end = v
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(v.len());
+    let number: f32 = v[..end]
+        .parse()
+        .ok()
+        .filter(|n: &f32| n.is_finite() && *n >= 0.0)?;
+    Some(if v[end..].starts_with('%') {
+        LengthPercentage::Percentage(number)
+    } else {
+        LengthPercentage::Length(Length::px(number))
+    })
+}
+
+/// Presentational hints (HTML §15.4.3 "Attributes for embedded content"):
+/// `width`/`height` attributes of embedded content map to CSS properties.
+fn presentational_hints(doc: &Document, el: NodeId) -> Vec<PropertyDeclaration> {
+    use crate::properties::{Longhand, Value};
+    use crate::values::LengthPercentageAuto;
+    if !matches!(
+        doc.tag_name(el),
+        Some("img" | "canvas" | "video" | "iframe" | "embed" | "object")
+    ) {
+        return Vec::new();
+    }
+    [("width", Longhand::Width), ("height", Longhand::Height)]
+        .into_iter()
+        .filter_map(|(attr, property)| {
+            let lp = parse_dimension(doc.attribute(el, attr)?)?;
+            Some(PropertyDeclaration {
+                property,
+                value: Value::LengthPercentageAuto(LengthPercentageAuto::LengthPercentage(lp)),
+                important: false,
+            })
+        })
+        .collect()
 }
 
 /// Computes the style of every element in `doc`.
@@ -271,7 +317,9 @@ pub fn compute_styles(
                     .collect()
             });
 
-        let share_key = (!is_root && inline.is_none()).then(|| {
+        let hints = presentational_hints(doc, el);
+
+        let share_key = (!is_root && inline.is_none() && hints.is_empty()).then(|| {
             let parent_ptr = parent_style.as_ref().map_or(0, |p| Rc::as_ptr(p) as usize);
             (parent_ptr, matched.clone())
         });
@@ -297,6 +345,9 @@ pub fn compute_styles(
                     d,
                 ));
             }
+        }
+        for d in &hints {
+            entries.push(((HINT_PRECEDENCE, Specificity::default(), 0), d));
         }
         if let Some(inline) = &inline {
             stats.inline_styles += 1;
@@ -392,5 +443,41 @@ mod tests {
             styles.get(ps[0]).unwrap().color,
             styles.get(ps[1]).unwrap().color
         );
+    }
+}
+
+#[cfg(test)]
+mod hint_tests {
+    use super::*;
+
+    fn width_of(html: &str) -> String {
+        let out = rustlite_html::parse_document(html);
+        let doc = &out.document;
+        let (styles, _) = compute_styles(doc, &stylist_for(doc), (800.0, 600.0));
+        let img = doc.find_element(doc.root(), "img").unwrap();
+        crate::resolved_value(styles.get(img).unwrap(), "width").unwrap()
+    }
+
+    #[test]
+    fn width_attribute_is_a_presentational_hint() {
+        assert_eq!(width_of("<img width=120>"), "120px");
+        assert_eq!(width_of("<img width='50%'>"), "50%");
+        assert_eq!(
+            width_of("<img width='80px'>"),
+            "80px",
+            "trailing garbage ignored"
+        );
+        assert_eq!(
+            width_of("<img width=-5>"),
+            "auto",
+            "invalid values are ignored"
+        );
+        // Any author rule beats the hint, regardless of specificity.
+        assert_eq!(
+            width_of("<style>* { width: 10px }</style><img width=120>"),
+            "10px"
+        );
+        // The UA sheet does not.
+        assert_eq!(width_of("<img>"), "auto");
     }
 }

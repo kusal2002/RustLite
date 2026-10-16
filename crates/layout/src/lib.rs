@@ -12,13 +12,14 @@ mod build;
 mod geometry;
 mod inline;
 mod paint;
+mod replaced;
 
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustlite_dom::{Document, NodeId};
 use rustlite_fonts::FontContext;
-use rustlite_paint::GlyphRun;
+use rustlite_paint::{GlyphRun, ImageData};
 use rustlite_style::{ComputedStyle, ComputedStyles};
 
 pub use geometry::{Edges, RectF};
@@ -37,6 +38,22 @@ pub struct BlockBox {
     pub border: Edges,
     pub padding: Edges,
     pub margin: Edges,
+    /// The `::marker` of a list item (outside position).
+    pub marker: Option<Marker>,
+    /// Set for block-level replaced elements (e.g. `img { display: block }`).
+    pub replaced: Option<ReplacedContent>,
+}
+
+/// An outside list marker: shaped text placed to the left of the list item's
+/// content box, on its first baseline. It does not affect layout.
+#[derive(Debug, Clone)]
+pub struct Marker {
+    pub text: String,
+    /// Start of the marker text; relative to the item's content box during
+    /// layout, absolute afterwards.
+    pub x: f32,
+    pub baseline: f32,
+    pub runs: Vec<(f32, GlyphRun)>,
 }
 
 impl BlockBox {
@@ -69,6 +86,22 @@ pub enum InlineItem {
         node: NodeId,
         style: Rc<ComputedStyle>,
     },
+    /// An atomic inline-level box: a replaced element such as `<img>`.
+    Atomic {
+        node: NodeId,
+        style: Rc<ComputedStyle>,
+        image: Option<Rc<ImageData>>,
+    },
+}
+
+/// Decoded images for `<img>` elements, keyed by element.
+pub type Images = HashMap<NodeId, Rc<ImageData>>;
+
+/// Content of a block-level replaced element.
+#[derive(Debug, Clone)]
+pub struct ReplacedContent {
+    /// `None` when the image is missing or failed to load.
+    pub image: Option<Rc<ImageData>>,
 }
 
 /// Inline formatting context content and the line boxes it produced.
@@ -119,7 +152,18 @@ pub fn layout_document(
     fonts: &mut FontContext,
     viewport: (f32, f32),
 ) -> LayoutTree {
-    let mut root = build::build_box_tree(doc, styles);
+    layout_document_with_images(doc, styles, fonts, &Images::new(), viewport)
+}
+
+/// Like [`layout_document`], with decoded images for `<img>` elements.
+pub fn layout_document_with_images(
+    doc: &Document,
+    styles: &ComputedStyles,
+    fonts: &mut FontContext,
+    images: &Images,
+    viewport: (f32, f32),
+) -> LayoutTree {
+    let mut root = build::build_box_tree(doc, styles, images);
     let mut ctx = LayoutContext { fonts };
     let mut document_height = 0.0;
     if let Some(root) = root.as_mut() {

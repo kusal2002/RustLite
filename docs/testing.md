@@ -24,7 +24,7 @@ Both run: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- 
 | Golden HTML | `tests/html/*.html` → `*.tree` via `crates/html/tests/golden.rs` | Expected trees come from a reference browser (below) |
 | Golden style | `tests/style/*.html` → `*.styles` via `crates/style/tests/golden.rs` | `getComputedStyle` from a reference browser, 800×600 |
 | Style dump | `rustlite --size 800x600 --dump-style file.html` | Same format as the style goldens |
-| Golden layout | `tests/layout/*.html` → `*.boxes` via `crates/layout/tests/golden.rs` | `getBoundingClientRect` from a reference browser, 800×600; per-fixture tolerance; text fixtures skip when their font is missing |
+| Golden layout | `tests/layout/*.html` → `*.boxes` via `crates/browser-core/tests/layout_golden.rs` (full page pipeline, images from `tests/layout/assets/`) | `getBoundingClientRect` from a reference browser, 800×600; per-fixture tolerance; text fixtures skip when their font is missing |
 | Layout dump | `rustlite --size 800x600 --dump-layout file.html` | Same format as the layout goldens |
 | Visual check | `rustlite --headless out.png tests/pages/sample.html` | Renders a real page to PNG |
 | DOM dump | `rustlite --dump-dom file.html` | Prints RustLite's tree in html5lib format for ad-hoc diffs |

@@ -16,6 +16,9 @@
   .right { text-align: right; color: gray; font-size: 13px; }
   ul li { margin: 4px 0; }
   footer { text-align: center; font-size: 12px; color: #8d6e63; padding: 16px; }
+  .borders { border: 2px dashed #6d4c41; padding: 6px; }
+  .dotted { border: 3px dotted #1e88e5; padding: 6px; }
+  .double { border: 6px double #43a047; padding: 6px; }
 </style>
 </head>
 <body>
@@ -35,8 +38,17 @@
   <ul>
     <li>HTML parsing verified against Chromium on 32 fixtures</li>
     <li>CSS computed styles verified on 11 fixtures</li>
-    <li>Block and inline layout with margin collapsing</li>
+    <li>Block and inline layout with margin collapsing
+      <ul><li>nested lists get circles</li></ul></li>
   </ul>
+  <ol start="3">
+    <li>Numbered from three</li>
+    <li>Images: <img src="assets/red-40x20.png" alt=""> inline,
+      <img src="assets/checker-8x8.png" width="24" alt=""> scaled with alpha</li>
+  </ol>
+  <p class="borders"><span>dashed</span></p>
+  <p class="dotted">dotted border</p>
+  <p class="double">double border</p>
   <p class="center">Centered text<br>with a forced line break</p>
   <p lang="si">සිංහල අකුරු: ශ්‍රී ලංකාව</p>
   <p class="right">Right-aligned, smaller, gray.</p>

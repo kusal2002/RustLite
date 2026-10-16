@@ -1,6 +1,6 @@
 # ADR-0002: Font stack — fontdb + rustybuzz + fontdue
 
-- Status: Accepted
+- Status: Accepted; rasterization superseded by [ADR-0003](ADR-0003-own-glyph-rasterizer.md)
 - Date: 2026-10-16
 
 ## Context

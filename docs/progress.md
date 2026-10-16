@@ -29,6 +29,10 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | LAYOUT-001 | Box tree, block layout, margin collapsing, inline layout, line breaking | Verified on reference browser (fixture set) | 9/9 geometry goldens match Chromium 152 (max 0.032px off); [spec](../research/specifications/LAYOUT-001.md) |
 | RENDER-005 | Paint of backgrounds, borders, text; device scale; overflow clip | Tested | `layout` + `renderer` tests; headless render of `tests/pages/sample.html` |
 | SHELL-001 | Open a local file, title, wheel/keyboard scrolling | Tested | `commands` tests; windowed run with sample page |
+| FONT-002 | On-demand glyph rasterizer (fontdue removed) | Tested | `raster` tests; memory 73.6 → 23.9 MB ([ADR-0003](../research/decisions/ADR-0003-own-glyph-rasterizer.md)) |
+| LIST-001 | `list-style-type`, outside list markers, `<ol start>`, `<li value>` | Tested | `layout` tests (ordinals, counter styles, placement); visual check |
+| IMAGE-001 | Local `<img>` (PNG/JPEG/GIF), presentational hints, replaced sizing, inline/block | Verified on reference browser (fixture set) | 2/2 image fixtures match Chromium 152; [spec](../research/specifications/IMAGE-001.md) |
+| RENDER-006 | Image drawing (bilinear, alpha, clip); dashed/dotted/double borders | Tested | `renderer` + `paint` tests; visual check |
 | NET-001 | HTTP(S) loading | Planned | — |
 | NAV-001 | Navigation state machine | Planned | — |
 | JS-001 | JS runtime | Deferred (Phase 9) | — |
@@ -37,12 +41,13 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 | Platform | Build | Tests | Window | Notes |
 |---|---|---|---|---|
-| Windows 11 x64 (MSVC) | ✅ | ✅ 165/165 | ✅ | Ryzen 5 5600G, Radeon iGPU |
+| Windows 11 x64 (MSVC) | ✅ | ✅ 184/184 | ✅ | Ryzen 5 5600G, Radeon iGPU |
 | Linux x64 | ✅ CI | ✅ CI (run 38864693788) | Unverified | No display in CI; text layout goldens skip (no Times New Roman) |
 | macOS | ✅ CI | ✅ CI (run 38864693788) | Unverified | Layout text goldens pin Times New Roman and skip if its metrics differ from the reference machine |
 
 ## Known limitations
 
+- Images load only from the document's directory (no network or `data:` URLs).
 - Layout covers normal flow only: no floats, positioning, flex, grid, tables,
   images or list markers yet (see compatibility.md).
 - CSS gaps (at-rules, `:not()`, `var()`, `calc()`, external sheets) are listed in
@@ -118,3 +123,23 @@ Tested · Verified on reference browser · Blocked · Deferred.
 - **Measurements:** see [performance.md](performance.md) (memory with a page loaded
   is 73.6 MB; font data handling is the main cost).
 - **Next:** Phase 5 completion (images, list markers) and Phase 6 networking.
+
+### 2026-10-16 — Phase 5: images, list markers, border styles, font memory
+
+- **What:** an on-demand glyph rasterizer replaces fontdue (ADR-0003);
+  `list-style-type` with outside markers and list ordinals; local `<img>`
+  loading (PNG/JPEG/GIF, size limits, document-directory policy) with
+  presentational `width`/`height` hints, replaced-element sizing, atomic
+  inline and block images; bilinear image drawing; dashed, dotted and double
+  borders. The layout golden harness moved to `browser-core` so fixtures run
+  through the real page pipeline including image loading; the oracle serves
+  image assets.
+- **Evidence:** both new image fixtures matched Chromium 152 on the first run;
+  all 11 layout fixtures pass.
+- **Bug found visually:** double-border corners overlapped; now drawn as two
+  nested rings (unit-tested).
+- **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 184 passed ·
+  release build ✅.
+- **Measurements:** sample page with images: 24.4 MB working set (was 73.6 MB
+  with fontdue); binary 2.5 MiB. See [performance.md](performance.md).
+- **Next:** Phase 6 networking.

@@ -1,0 +1,13 @@
+<html> 0 0 800 293
+<head> 0 0 0 0
+<style> 0 0 0 0
+<body> 0 0 800 293
+<img#intrinsic> 0 0 40 20
+<img#width-only> 0 20 100 50
+<img#height-only> 0 70 5 15
+<img#both> 0 85 30 30
+<img#percent> 0 115 200 100
+<img#centered> 395 220 10 30
+<img#css-beats-attr> 0 255 20 10
+<img#boxed> 10 265 18 18
+<div#after> 0 283 800 10

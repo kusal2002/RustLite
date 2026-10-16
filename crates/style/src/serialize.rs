@@ -124,6 +124,7 @@ pub fn resolved_value(style: &ComputedStyle, property: &str) -> Option<String> {
             ComputedLineHeight::Px(v) => px(v),
         },
         "text-align" => style.text_align.as_css().into(),
+        "list-style-type" => style.list_style_type.as_css().into(),
         "overflow-x" => style.overflow_x.as_css().into(),
         "overflow-y" => style.overflow_y.as_css().into(),
         "width" => length_auto(style.width),

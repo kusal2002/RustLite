@@ -223,3 +223,79 @@ fn painting_produces_backgrounds_borders_and_text() {
             .any(|i| matches!(i, rustlite_paint::DisplayItem::Text { .. }))
     );
 }
+
+#[test]
+fn marker_text_for_counter_styles() {
+    use crate::build::marker_text;
+    use rustlite_style::properties::ListStyleType as T;
+    assert_eq!(marker_text(T::Disc, 1).as_deref(), Some("\u{2022} "));
+    assert_eq!(marker_text(T::Decimal, 12).as_deref(), Some("12. "));
+    assert_eq!(marker_text(T::LowerAlpha, 28).as_deref(), Some("ab. "));
+    assert_eq!(
+        marker_text(T::UpperRoman, 1994).as_deref(),
+        Some("MCMXCIV. ")
+    );
+    assert_eq!(
+        marker_text(T::LowerRoman, 0).as_deref(),
+        Some("0. "),
+        "out of range falls back to decimal"
+    );
+    assert_eq!(marker_text(T::None, 1), None);
+}
+
+fn markers(l: &Laid) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack: Vec<&BlockBox> = l.tree.root.iter().collect();
+    while let Some(b) = stack.pop() {
+        if let Some(m) = &b.marker {
+            out.push(m.text.clone());
+        }
+        if let BlockChildren::Blocks(k) = &b.children {
+            stack.extend(k.iter().rev());
+        }
+    }
+    out
+}
+
+#[test]
+fn list_ordinals_respect_start_and_value() {
+    let l = lay_out(&format!(
+        "{RESET}<ol start=5><li>a<li>b<li value=10>c<li>d</ol><ul><li>x<ul><li>y</ul></ul><ol style='list-style-type: upper-alpha'><li>q</ol>"
+    ));
+    assert_eq!(
+        markers(&l),
+        [
+            "5. ",
+            "6. ",
+            "10. ",
+            "11. ",
+            "\u{2022} ",
+            "\u{25E6} ",
+            "A. "
+        ]
+    );
+}
+
+#[test]
+fn marker_sits_left_of_content_on_first_baseline() {
+    let Some(mut f) = fonts() else { return };
+    let l = lay_out_with(
+        &format!("{RESET}<ul style='margin:0'><li id=li>item</li></ul>"),
+        &mut f,
+    );
+    let li = l.rect("li");
+    let mut stack: Vec<&BlockBox> = l.tree.root.iter().collect();
+    while let Some(b) = stack.pop() {
+        if let (Some(m), BlockChildren::Inline(inline)) = (&b.marker, &b.children) {
+            let width: f32 = m.runs.iter().map(|(_, r)| r.glyphs.len() as f32).sum();
+            assert!(width > 0.0, "marker has glyphs");
+            assert!(m.x < li.x, "marker is outside the content box");
+            assert_eq!(m.baseline, inline.lines[0].fragments[0].baseline);
+            return;
+        }
+        if let BlockChildren::Blocks(k) = &b.children {
+            stack.extend(k.iter());
+        }
+    }
+    panic!("no marker found");
+}

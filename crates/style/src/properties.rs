@@ -99,6 +99,20 @@ keyword_enum!(TextAlign {
     Justify = "justify",
 });
 
+keyword_enum!(ListStyleType {
+    None = "none",
+    Disc = "disc",
+    Circle = "circle",
+    Square = "square",
+    Decimal = "decimal",
+    LowerAlpha = "lower-alpha",
+    UpperAlpha = "upper-alpha",
+    LowerLatin = "lower-latin",
+    UpperLatin = "upper-latin",
+    LowerRoman = "lower-roman",
+    UpperRoman = "upper-roman",
+});
+
 keyword_enum!(Overflow {
     Visible = "visible",
     Hidden = "hidden",
@@ -156,6 +170,7 @@ pub enum Longhand {
     FontFamily,
     LineHeight,
     TextAlign,
+    ListStyleType,
     OverflowX,
     OverflowY,
     Width,
@@ -226,6 +241,7 @@ impl Longhand {
                 | Longhand::FontFamily
                 | Longhand::LineHeight
                 | Longhand::TextAlign
+                | Longhand::ListStyleType
         )
     }
 }
@@ -248,6 +264,7 @@ pub enum Value {
     FontFamily(Rc<[FamilyName]>),
     LineHeight(LineHeight),
     TextAlign(TextAlign),
+    ListStyleType(ListStyleType),
     Overflow(Overflow),
 }
 
@@ -412,6 +429,7 @@ fn parse_longhand(property: Longhand, value: &[ComponentValue]) -> Option<Value>
         L::FontStyle => Value::FontStyle(FontStyle::from_ident(ident(cv)?)?),
         L::LineHeight => Value::LineHeight(parse_line_height(cv)?),
         L::TextAlign => Value::TextAlign(TextAlign::from_ident(ident(cv)?)?),
+        L::ListStyleType => Value::ListStyleType(ListStyleType::from_ident(ident(cv)?)?),
         L::OverflowX | L::OverflowY => Value::Overflow(Overflow::from_ident(ident(cv)?)?),
         L::Width | L::Height => Value::LengthPercentageAuto(parse_lpa(cv, false)?),
         L::MarginTop | L::MarginRight | L::MarginBottom | L::MarginLeft => {
@@ -442,6 +460,7 @@ fn longhand_by_name(name: &str) -> Option<Longhand> {
         "font-family" => L::FontFamily,
         "line-height" => L::LineHeight,
         "text-align" => L::TextAlign,
+        "list-style-type" => L::ListStyleType,
         "overflow-x" => L::OverflowX,
         "overflow-y" => L::OverflowY,
         "width" => L::Width,
@@ -576,6 +595,29 @@ pub fn parse_declaration(decl: &Declaration) -> Vec<PropertyDeclaration> {
                     .collect()
             })
         }
+        // `list-style`: only the type component is supported; `inside`/`outside`
+        // are accepted (markers are always outside) and images make it invalid.
+        "list-style" => match css_wide(value) {
+            Some(w) => Some(vec![(Longhand::ListStyleType, w)]),
+            None => {
+                let mut ty = None;
+                let mut ok = true;
+                for cv in items(value) {
+                    let word = ident_lower(cv).unwrap_or_default();
+                    match ListStyleType::from_ident(&word) {
+                        Some(t) if ty.is_none() => ty = Some(t),
+                        _ if matches!(word.as_str(), "inside" | "outside") => {}
+                        _ => ok = false,
+                    }
+                }
+                ok.then(|| {
+                    vec![(
+                        Longhand::ListStyleType,
+                        Value::ListStyleType(ty.unwrap_or(ListStyleType::Disc)),
+                    )]
+                })
+            }
+        },
         "overflow" => {
             if let Some(w) = css_wide(value) {
                 Some(vec![
@@ -737,6 +779,6 @@ mod tests {
 
     #[test]
     fn longhand_count() {
-        assert_eq!(LONGHAND_COUNT, 33);
+        assert_eq!(LONGHAND_COUNT, 34);
     }
 }

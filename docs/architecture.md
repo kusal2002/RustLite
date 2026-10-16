@@ -88,10 +88,12 @@ windows.
 | `fontdb 0.24` | System font discovery and CSS-style matching | All (pure Rust; reads fontconfig files on Linux) | MIT | Indexes ~365 faces in ~35 ms. |
 | `rustybuzz 0.20` | Shaping (HarfBuzz port) | All | MIT | Pure Rust. |
 | `ttf-parser 0.25` | Font tables, metrics, cmap | All | MIT/Apache-2.0 | Shared by fontdb and rustybuzz. |
-| `fontdue 0.9` | Glyph rasterization | All | MIT/Apache-2.0/Zlib | Parses whole faces eagerly (memory cost; see roadmap). |
+| `image 0.25` (png, jpeg, gif only) | Image decoding | All | MIT/Apache-2.0 | ~0.45 MiB of binary; limits on dimensions and allocation. |
 
 Deferred until needed: `wgpu` (GPU backend),
 `url`, `rustls`/HTTP client, `image`, `boa_engine`, `rusqlite`, `criterion`,
 `proptest`. Each will be evaluated when its milestone starts.
 
-Release binary (Windows x64, thin LTO, `panic=abort`): **2.1 MiB** (1.06 MiB before fonts/layout).
+Release binary (Windows x64, thin LTO, `panic=abort`): **2.5 MiB** (1.06 MiB before fonts/layout).
+Glyph rasterization is RustLite code ([ADR-0003](../research/decisions/ADR-0003-own-glyph-rasterizer.md));
+fontdue was removed.
