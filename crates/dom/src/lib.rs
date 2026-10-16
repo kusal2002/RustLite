@@ -62,6 +62,32 @@ pub struct Document {
     nodes: Vec<Node>,
     quirks_mode: QuirksMode,
     generation: u64,
+    form: FormState,
+}
+
+/// Form control state that is not in the markup (HTML §4.10.17): the
+/// current value once edited ("dirty"), checkedness once changed, and the
+/// focused element. Changing it bumps the [form generation](Document::form_generation),
+/// not the tree generation: it affects layout and paint, not style.
+#[derive(Debug, Clone, Default)]
+struct FormState {
+    values: std::collections::HashMap<NodeId, String>,
+    checked: std::collections::HashMap<NodeId, bool>,
+    focused: Option<NodeId>,
+    generation: u64,
+}
+
+/// What kind of form control an element is, for layout, painting and input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControlKind {
+    /// Single-line text field (`text`, `password`, `search`, `email`, …).
+    Text {
+        password: bool,
+    },
+    /// `<button>` or `<input type=submit|reset|button>`.
+    Button,
+    Checkbox,
+    Radio,
 }
 
 impl Default for Document {
@@ -76,6 +102,7 @@ impl Document {
             nodes: Vec::new(),
             quirks_mode: QuirksMode::NoQuirks,
             generation: 0,
+            form: FormState::default(),
         };
         doc.push(NodeData::Document);
         doc
@@ -98,6 +125,84 @@ impl Document {
     /// compare generations to detect that cached results are stale.
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Increments whenever form state (values, checkedness, focus) changes.
+    pub fn form_generation(&self) -> u64 {
+        self.form.generation
+    }
+
+    /// The form control kind of `id`, if it is one RustLite renders.
+    /// `<input type=hidden>` and unsupported types (`file`, `range`, …) are
+    /// treated as text fields except `hidden`, which is not a control here.
+    pub fn control_kind(&self, id: NodeId) -> Option<ControlKind> {
+        match self.tag_name(id)? {
+            "button" => Some(ControlKind::Button),
+            "input" => {
+                let t = self
+                    .attribute(id, "type")
+                    .unwrap_or("")
+                    .trim()
+                    .to_ascii_lowercase();
+                Some(match t.as_str() {
+                    "hidden" => return None,
+                    "submit" | "reset" | "button" | "image" => ControlKind::Button,
+                    "checkbox" => ControlKind::Checkbox,
+                    "radio" => ControlKind::Radio,
+                    "password" => ControlKind::Text { password: true },
+                    _ => ControlKind::Text { password: false },
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// The current value of a text control: the edited value if any, else
+    /// the `value` attribute with line breaks removed (HTML's value
+    /// sanitization for text fields).
+    pub fn control_value(&self, id: NodeId) -> String {
+        if let Some(v) = self.form.values.get(&id) {
+            return v.clone();
+        }
+        self.attribute(id, "value")
+            .unwrap_or("")
+            .chars()
+            .filter(|&c| c != '\n' && c != '\r')
+            .collect()
+    }
+
+    /// Sets the current ("dirty") value; later `value` attribute changes no
+    /// longer show, as in browsers.
+    pub fn set_control_value(&mut self, id: NodeId, value: &str) {
+        let clean: String = value.chars().filter(|&c| c != '\n' && c != '\r').collect();
+        self.form.values.insert(id, clean);
+        self.form.generation += 1;
+    }
+
+    /// Checkedness: the changed state if any, else the `checked` attribute.
+    pub fn checked(&self, id: NodeId) -> bool {
+        self.form
+            .checked
+            .get(&id)
+            .copied()
+            .unwrap_or_else(|| self.attribute(id, "checked").is_some())
+    }
+
+    pub fn set_checked(&mut self, id: NodeId, checked: bool) {
+        self.form.checked.insert(id, checked);
+        self.form.generation += 1;
+    }
+
+    /// The focused element, if any.
+    pub fn focused(&self) -> Option<NodeId> {
+        self.form.focused
+    }
+
+    pub fn set_focused(&mut self, id: Option<NodeId>) {
+        if self.form.focused != id {
+            self.form.focused = id;
+            self.form.generation += 1;
+        }
     }
 
     /// Total nodes ever created, including detached ones.

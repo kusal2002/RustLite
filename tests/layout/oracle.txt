@@ -4,6 +4,7 @@ body-and-html-margins CSS1Compat
 box-model CSS1Compat
 display-none-and-contents CSS1Compat
 document-defaults CSS1Compat
+form-controls CSS1Compat
 images-block CSS1Compat
 images-inline CSS1Compat
 inline-elements CSS1Compat

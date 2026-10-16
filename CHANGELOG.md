@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added — 2026-10-16 (Phase 10, part 1)
+- Timers (`setTimeout`, `setInterval`, clears), `requestAnimationFrame`,
+  `performance.now()`; the desktop event loop wakes for page timers and
+  paces animation frames; headless renders run timers due soon after load.
+- `element.style` (CSSStyleDeclaration subset) backed by the `style`
+  attribute; images and stylesheets inserted by scripts are fetched.
+- Form controls: text/password fields, buttons, checkboxes and radios with
+  Chromium-matched sizing (new `form-controls` layout fixture), focus ring,
+  caret, typing and caret keys, Tab navigation, paste, `input`/`change`/
+  `focus`/`blur`/`keydown`/`keyup`/`submit` events, GET form submission,
+  `value`/`checked`/`focus()`/`document.activeElement`.
+- `Page::click`, `Page::key_down`/`key_up` and the `PageKey` input model
+  (replacing `Page::dispatch_click`).
+- Interaction tests; fuzzing covers clicks, keys, form properties, `style`
+  and timers.
+
 ### Added — 2026-10-16 (Phase 9)
 - JavaScript via Boa 0.22 (`rustlite-script`): classic inline and external
   scripts run after parsing in document order, then `DOMContentLoaded` and

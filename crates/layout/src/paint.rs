@@ -8,6 +8,12 @@ use rustlite_style::properties::{BorderStyle, Overflow};
 
 use crate::{BlockBox, BlockChildren, InlineContent, InlineItem, LayoutTree, LineBox, RectF};
 
+/// Chromium's default accent color for checked toggles.
+const ACCENT: Color = Color::rgb(0, 117, 255);
+const TOGGLE_BORDER: Color = Color::rgb(118, 118, 118);
+/// Placeholder text (Chromium's `darkGray`).
+const PLACEHOLDER: Color = Color::rgb(117, 117, 117);
+
 fn color(c: Rgba) -> Color {
     // Alpha is clamped to 0..=1 at parse time.
     Color::rgba(c.r, c.g, c.b, (c.a * 255.0).round() as u8)
@@ -143,6 +149,14 @@ impl Painter {
         for f in &line.fragments {
             let style = match &inline.items[f.item] {
                 InlineItem::Text { style, .. } => style,
+                InlineItem::Atomic {
+                    style,
+                    control: Some(control),
+                    ..
+                } => {
+                    self.control(f, style, control, out);
+                    continue;
+                }
                 InlineItem::Atomic { style, image, .. } => {
                     self.replaced(f.rect, style, image.as_ref(), out);
                     continue;
@@ -197,9 +211,99 @@ impl Painter {
     /// `ridge`, `inset` and `outset` are drawn as solid bands (3D shading is a
     /// known gap); `dashed`, `dotted` and `double` are patterned.
     fn borders(&self, b: &BlockBox, out: &mut DisplayList) {
-        let s = &b.style;
-        let e = &b.border;
-        let r = b.rect;
+        self.border_box(b.rect, &b.style, &b.border, out);
+    }
+
+    /// Paints a form control from its border-box fragment.
+    fn control(
+        &self,
+        f: &crate::TextFragment,
+        style: &rustlite_style::ComputedStyle,
+        control: &crate::Control,
+        out: &mut DisplayList,
+    ) {
+        use rustlite_dom::ControlKind;
+        let r = f.rect;
+        if matches!(control.kind, ControlKind::Checkbox | ControlKind::Radio) {
+            // Chromium-like toggles: a white box with a gray outline, filled
+            // with the accent color when checked.
+            let (fill, edge) = if control.checked {
+                (ACCENT, ACCENT)
+            } else {
+                (Color::WHITE, TOGGLE_BORDER)
+            };
+            let device = self.device(r, true);
+            let line = (self.scale.round() as u32).max(1);
+            out.fill_rect(device, fill);
+            out.stroke_rect(device, line, edge);
+            if control.checked {
+                let inset = (device.width / 4).max(1);
+                let mark = rustlite_paint::Rect::new(
+                    device.x + inset as i32,
+                    device.y + inset as i32,
+                    device.width.saturating_sub(2 * inset),
+                    device.height.saturating_sub(2 * inset),
+                );
+                if control.kind == ControlKind::Radio {
+                    out.fill_rect(mark, Color::WHITE);
+                    let dot = (mark.width / 4).max(1);
+                    out.fill_rect(
+                        rustlite_paint::Rect::new(
+                            mark.x + dot as i32,
+                            mark.y + dot as i32,
+                            mark.width.saturating_sub(2 * dot),
+                            mark.height.saturating_sub(2 * dot),
+                        ),
+                        ACCENT,
+                    );
+                } else {
+                    out.fill_rect(mark, Color::WHITE);
+                }
+            }
+            return;
+        }
+        out.fill_rect(self.device(r, true), color(style.background_color));
+        let edges = crate::Edges {
+            top: style.border_width[0],
+            right: style.border_width[1],
+            bottom: style.border_width[2],
+            left: style.border_width[3],
+        };
+        self.border_box(r, style, &edges, out);
+        // Text stays inside the content box (inputs clip their overflow).
+        let content = RectF::new(
+            r.x + edges.left,
+            r.y + edges.top,
+            (r.width - edges.left - edges.right).max(0.0),
+            (r.height - edges.top - edges.bottom).max(0.0),
+        );
+        let text_color = if control.placeholder {
+            PLACEHOLDER
+        } else {
+            color(style.color)
+        };
+        out.push_clip(self.device(content, true));
+        for (dx, run) in &f.runs {
+            out.push(DisplayItem::Text {
+                x: (r.x + dx) * self.scale,
+                y: (f.baseline + self.dy) * self.scale,
+                scale: self.scale,
+                color: text_color,
+                run: run.clone(),
+            });
+        }
+        out.pop_clip();
+    }
+
+    /// Paints the four borders of a border box `r` with `style`'s border
+    /// styles and colors.
+    fn border_box(
+        &self,
+        r: RectF,
+        s: &rustlite_style::ComputedStyle,
+        e: &crate::Edges,
+        out: &mut DisplayList,
+    ) {
         let inner_height = r.height - e.top - e.bottom;
         // (side index, band rect, thickness, horizontal?)
         let sides = [

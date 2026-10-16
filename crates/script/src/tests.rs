@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use rustlite_dom::Document;
 
 use super::*;
@@ -177,6 +179,132 @@ fn console_output_is_captured() {
     let (mut h, mut d) = page("<p>x</p>");
     h.run_script(&mut d, "console.log('a', 1, {}); console.error('b')", "log");
     assert_eq!(h.console(), ["a 1 [object Object]", "b"]);
+}
+
+#[test]
+fn timers_run_in_deadline_order_and_can_be_cleared() {
+    let (mut h, mut d) = page("<p id=a>x</p>");
+    assert_eq!(h.next_timer_due(), None);
+    h.run_script(
+        &mut d,
+        "window.log = [];\
+         setTimeout(() => log.push('b'), 20);\
+         setTimeout((x, y) => log.push(x + y), 10, 'a', '!');\
+         const t = setTimeout(() => log.push('never'), 15); clearTimeout(t);\
+         setTimeout(\"log.push('code')\", 30);\
+         window.n = 0; const i = setInterval(() => { if (++n === 3) clearInterval(i); }, 5);",
+        "timers",
+    );
+    let due = h.next_timer_due().expect("timers pending");
+    assert!(due <= Instant::now() + std::time::Duration::from_millis(10));
+    // Nothing is due yet at the time of scheduling.
+    let out = h.run_due_timers(&mut d, Instant::now() - std::time::Duration::from_secs(1));
+    assert!(out.errors.is_empty());
+    assert_eq!(eval(&mut h, &mut d, "log.length"), "0");
+    // A simulated clock: one second later, then 10 ms steps.
+    let base = Instant::now() + std::time::Duration::from_secs(1);
+    for step in 0..5 {
+        h.run_due_timers(&mut d, base + std::time::Duration::from_millis(10 * step));
+    }
+    assert_eq!(eval(&mut h, &mut d, "log.join(',')"), "a!,b,code");
+    assert_eq!(eval(&mut h, &mut d, "n"), "3");
+    assert_eq!(h.next_timer_due(), None, "the interval cleared itself");
+}
+
+#[test]
+fn timers_that_mutate_report_it() {
+    let (mut h, mut d) = page("<p id=a>x</p>");
+    h.run_script(
+        &mut d,
+        "setTimeout(() => document.getElementById('a').textContent = 'later', 0)",
+        "t",
+    );
+    let out = h.run_due_timers(&mut d, Instant::now() + std::time::Duration::from_secs(1));
+    assert!(out.mutated);
+    assert_eq!(d.text_content(by_id(&d, "a")), "later");
+}
+
+#[test]
+fn animation_frames_run_once_per_frame() {
+    let (mut h, mut d) = page("<p>x</p>");
+    h.run_script(
+        &mut d,
+        "window.frames = 0;\
+         function tick(ts) { frames++; window.ts = ts; if (frames < 3) requestAnimationFrame(tick); }\
+         requestAnimationFrame(tick);\
+         cancelAnimationFrame(requestAnimationFrame(() => frames += 100));",
+        "raf",
+    );
+    let mut runs = 0;
+    while h.wants_animation_frame() {
+        h.run_animation_frames(&mut d, Instant::now());
+        runs += 1;
+        assert!(runs < 10);
+    }
+    assert_eq!(runs, 3);
+    assert_eq!(eval(&mut h, &mut d, "frames"), "3");
+    assert_eq!(eval(&mut h, &mut d, "typeof ts"), "number");
+    assert_eq!(
+        eval(
+            &mut h,
+            &mut d,
+            "performance.now() >= 0 && performance.now() < 60000"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn timer_count_is_bounded() {
+    let (mut h, mut d) = page("<p>x</p>");
+    h.run_script(
+        &mut d,
+        "window.last = 0; for (let i = 0; i < 10005; i++) last = setTimeout(() => {}, 1000);",
+        "flood",
+    );
+    assert_eq!(
+        eval(&mut h, &mut d, "last"),
+        "0",
+        "calls past the limit are ignored"
+    );
+}
+
+#[test]
+fn element_style_reads_and_writes_the_style_attribute() {
+    let (mut h, mut d) = page("<p id=a style='color: red'>x</p>");
+    let out = h.run_script(
+        &mut d,
+        "const s = document.getElementById('a').style;\
+         window.before = s.color;\
+         s.backgroundColor = 'blue';\
+         s['margin-top'] = '4px';\
+         s.color = '';\
+         s.width = 'red; display: none';\
+         s.setProperty('--gap', '2px');\
+         window.same = s === document.getElementById('a').style;",
+        "style",
+    );
+    assert!(out.errors.is_empty(), "{:?}", out.errors);
+    assert_eq!(
+        d.attribute(by_id(&d, "a"), "style"),
+        Some("background-color: blue; margin-top: 4px; --gap: 2px;"),
+        "the injection attempt was ignored"
+    );
+    assert_eq!(eval(&mut h, &mut d, "before + ' ' + same"), "red true");
+    assert_eq!(
+        eval(
+            &mut h,
+            &mut d,
+            "document.getElementById('a').style.getPropertyValue('--gap')"
+        ),
+        "2px"
+    );
+    h.run_script(
+        &mut d,
+        "document.getElementById('a').style.cssText = 'display: none'",
+        "css",
+    );
+    assert_eq!(d.attribute(by_id(&d, "a"), "style"), Some("display: none"));
 }
 
 #[test]

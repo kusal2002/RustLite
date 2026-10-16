@@ -88,6 +88,9 @@ pub struct Tab {
     index: Option<usize>,
     /// The pending navigation is a reload (subresources skip the cache).
     reloading: bool,
+    /// Elements whose subresource was already requested for this document,
+    /// so later requests (after scripts change the page) skip them.
+    requested: std::collections::HashSet<(Destination, NodeId)>,
 }
 
 /// The tab id space a load id belongs to (see [`Tab::with_id_space`]).
@@ -200,6 +203,7 @@ impl Tab {
             history: Vec::new(),
             index: None,
             reloading: false,
+            requested: std::collections::HashSet::new(),
         }
     }
 
@@ -415,9 +419,73 @@ impl Tab {
         self.subresource_cancel.cancel();
         self.subresource_cancel = CancelToken::new();
         self.subresources.clear();
+        self.requested.clear();
         if load_subresources {
             self.request_subresources();
         }
+    }
+
+    /// Delivers a click to the page (scripts, then form controls; see
+    /// [`Page::click`]), fetches anything scripts added, and follows a form
+    /// submission. `consumed` tells the browser not to follow a link there.
+    pub fn click(&mut self, x: f32, y: f32) -> crate::InputOutcome {
+        let before = self.page.mutation_count();
+        let out = self.page.click(x, y);
+        self.after_input(before, &out);
+        out
+    }
+
+    /// Delivers a key press to the page (see [`Page::key_down`]).
+    pub fn key_down(&mut self, key: &crate::PageKey) -> crate::InputOutcome {
+        let before = self.page.mutation_count();
+        let out = self.page.key_down(key);
+        self.after_input(before, &out);
+        out
+    }
+
+    /// Delivers a key release to the page.
+    pub fn key_up(&mut self, key: &crate::PageKey) {
+        let before = self.page.mutation_count();
+        self.page.key_up(key);
+        self.after_input(before, &crate::InputOutcome::default());
+    }
+
+    fn after_input(&mut self, mutations_before: u64, out: &crate::InputOutcome) {
+        if self.page.mutation_count() != mutations_before {
+            self.request_subresources();
+        }
+        if let Some(url) = &out.navigate
+            && let Err(e) = self.navigate_to(url.clone(), Initiator::Page)
+        {
+            tracing::warn!(error = %e, "form submission blocked");
+        }
+    }
+
+    /// When the page's next timer is due.
+    pub fn next_timer(&mut self) -> Option<std::time::Instant> {
+        self.page.next_timer()
+    }
+
+    /// Runs due timers; returns whether the page changed.
+    pub fn run_timers(&mut self, now: std::time::Instant) -> bool {
+        let changed = self.page.run_timers(now);
+        if changed {
+            self.request_subresources();
+        }
+        changed
+    }
+
+    pub fn wants_animation_frame(&mut self) -> bool {
+        self.page.wants_animation_frame()
+    }
+
+    /// Runs animation frame callbacks; returns whether the page changed.
+    pub fn run_animation_frame(&mut self, now: std::time::Instant) -> bool {
+        let changed = self.page.run_animation_frame(now);
+        if changed {
+            self.request_subresources();
+        }
+        changed
     }
 
     fn request_subresources(&mut self) {
@@ -426,6 +494,13 @@ impl Tab {
         };
         let requests = self.page.subresource_requests();
         for (destination, url, nodes) in requests {
+            let nodes: Vec<NodeId> = nodes
+                .into_iter()
+                .filter(|&n| self.requested.insert((destination, n)))
+                .collect();
+            if nodes.is_empty() {
+                continue;
+            }
             let id = self.next_id();
             let request = Request {
                 url,

@@ -16,7 +16,7 @@ use crate::{DispatchFlags, HostState, Target, serialize};
 
 // ----- helpers -----------------------------------------------------------
 
-fn host(ctx: &mut Context) -> JsResult<&mut HostState> {
+pub(crate) fn host(ctx: &mut Context) -> JsResult<&mut HostState> {
     ctx.host_defined_mut()
         .get_mut::<HostState>()
         .ok_or_else(|| JsNativeError::error().with_message("no document").into())
@@ -256,10 +256,59 @@ pub(crate) fn install(ctx: &mut Context, url: &str) {
     method(ctx, &element_proto, "matches", 1, matches);
     method(ctx, &element_proto, "closest", 1, closest);
     method(ctx, &element_proto, "click", 0, click);
+    accessor(ctx, &element_proto, "value", value, Some(set_value));
+    accessor(ctx, &element_proto, "checked", checked, Some(set_checked));
+    accessor(ctx, &element_proto, "type", control_type, None);
+    accessor(ctx, &element_proto, "name", name, None);
+    method(ctx, &element_proto, "focus", 0, focus);
+    method(ctx, &element_proto, "blur", 0, blur);
+
+    accessor(ctx, &element_proto, "style", style, Some(set_style));
+
+    // CSSStyleDeclaration (element.style)
+    let style_proto = JsObject::with_object_proto(ctx.intrinsics());
+    for &name in crate::style_attr::PROPERTIES {
+        let get = NativeFunction::from_copy_closure(move |this, _, ctx| style_get(this, name, ctx));
+        let set = NativeFunction::from_copy_closure(move |this, args, ctx| {
+            style_set(this, name, args, ctx)
+        });
+        let getter: JsObject = FunctionObjectBuilder::new(ctx.realm(), get)
+            .length(0)
+            .build()
+            .into();
+        let setter: JsObject = FunctionObjectBuilder::new(ctx.realm(), set)
+            .length(1)
+            .build()
+            .into();
+        let camel = crate::style_attr::camel_case(name);
+        let keys = if camel == name {
+            vec![camel]
+        } else {
+            vec![camel, name.to_owned()]
+        };
+        for key in keys {
+            style_proto
+                .define_property_or_throw(
+                    JsString::from(key.as_str()),
+                    PropertyDescriptor::builder()
+                        .get(getter.clone())
+                        .set(setter.clone())
+                        .enumerable(true)
+                        .configurable(true),
+                    ctx,
+                )
+                .expect("fresh object");
+        }
+    }
+    accessor(ctx, &style_proto, "cssText", css_text, Some(set_css_text));
+    method(ctx, &style_proto, "getPropertyValue", 1, get_property_value);
+    method(ctx, &style_proto, "setProperty", 3, set_property);
+    method(ctx, &style_proto, "removeProperty", 1, remove_property);
 
     // Document
     accessor(ctx, &document_proto, "title", title, Some(set_title));
     accessor(ctx, &document_proto, "body", body, None);
+    accessor(ctx, &document_proto, "activeElement", active_element, None);
     accessor(ctx, &document_proto, "head", head, None);
     accessor(
         ctx,
@@ -295,11 +344,16 @@ pub(crate) fn install(ctx: &mut Context, url: &str) {
         property_handlers: HashMap::new(),
         attribute_handlers: HashMap::new(),
         node_proto,
+        style_objects: HashMap::new(),
+        style_nodes: HashMap::new(),
+        style_proto,
         element_proto,
         document_proto,
         dispatch: DispatchFlags::default(),
         dispatching: false,
         console: Vec::new(),
+        origin: std::time::Instant::now(),
+        timers: crate::timers::Timers::default(),
     });
 
     // Globals. `document` is the wrapper of the root node, created lazily
@@ -325,6 +379,28 @@ pub(crate) fn install(ctx: &mut Context, url: &str) {
         2,
         window_remove_event_listener,
     );
+    method(ctx, &global, "setTimeout", 2, crate::timers::set_timeout);
+    method(ctx, &global, "setInterval", 2, crate::timers::set_interval);
+    method(ctx, &global, "clearTimeout", 1, crate::timers::clear_timer);
+    method(ctx, &global, "clearInterval", 1, crate::timers::clear_timer);
+    method(
+        ctx,
+        &global,
+        "requestAnimationFrame",
+        1,
+        crate::timers::request_animation_frame,
+    );
+    method(
+        ctx,
+        &global,
+        "cancelAnimationFrame",
+        1,
+        crate::timers::cancel_animation_frame,
+    );
+    let performance = JsObject::with_object_proto(ctx.intrinsics());
+    method(ctx, &performance, "now", 0, crate::timers::performance_now);
+    ctx.register_global_property(js_string!("performance"), performance, PropAttr::READONLY)
+        .expect("fresh global");
 
     let console = JsObject::with_object_proto(ctx.intrinsics());
     for name in ["log", "info", "warn", "error", "debug"] {
@@ -844,6 +920,251 @@ fn class_op(n: NodeId, op: ClassOp, args: &[JsValue], ctx: &mut Context) -> JsRe
     Ok(result)
 }
 
+// ----- form controls -----------------------------------------------------
+
+fn value(this: &JsValue, _: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = this_element(this, ctx)?;
+    let v = with_dom(ctx, |d| match d.control_kind(n) {
+        Some(rustlite_dom::ControlKind::Text { .. }) => d.control_value(n),
+        Some(rustlite_dom::ControlKind::Checkbox | rustlite_dom::ControlKind::Radio) => {
+            d.attribute(n, "value").unwrap_or("on").to_owned()
+        }
+        _ => d.attribute(n, "value").unwrap_or("").to_owned(),
+    })?;
+    Ok(string(&v))
+}
+
+fn set_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = this_element(this, ctx)?;
+    let v = arg_string(args, 0, ctx)?;
+    with_dom_mut(ctx, |d| match d.control_kind(n) {
+        Some(rustlite_dom::ControlKind::Text { .. }) => d.set_control_value(n, &v),
+        _ => d.set_attribute(n, "value", v),
+    })?;
+    Ok(JsValue::undefined())
+}
+
+fn checked(this: &JsValue, _: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = this_element(this, ctx)?;
+    Ok(JsValue::from(with_dom(ctx, |d| d.checked(n))?))
+}
+
+fn set_checked(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = this_element(this, ctx)?;
+    let on = arg(args, 0).to_boolean();
+    with_dom_mut(ctx, |d| {
+        if on && d.control_kind(n) == Some(rustlite_dom::ControlKind::Radio) {
+            uncheck_radio_group(d, n);
+        }
+        d.set_checked(n, on);
+    })?;
+    Ok(JsValue::undefined())
+}
+
+/// Unchecks the other radios with `n`'s name in the same form (or, outside
+/// forms, the same document), HTML §4.10.5.1.16.
+pub fn uncheck_radio_group(d: &mut Document, n: NodeId) {
+    let Some(name) = d
+        .attribute(n, "name")
+        .map(str::to_owned)
+        .filter(|s| !s.is_empty())
+    else {
+        return;
+    };
+    let form_of = |d: &Document, x: NodeId| d.ancestors(x).find(|&a| d.is_element_named(a, "form"));
+    let form = form_of(d, n);
+    let group: Vec<NodeId> = d
+        .descendants(d.root())
+        .filter(|&x| {
+            x != n
+                && d.control_kind(x) == Some(rustlite_dom::ControlKind::Radio)
+                && d.attribute(x, "name") == Some(name.as_str())
+                && form_of(d, x) == form
+        })
+        .collect();
+    for x in group {
+        d.set_checked(x, false);
+    }
+}
+
+fn control_type(this: &JsValue, _: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = this_element(this, ctx)?;
+    let t = with_dom(ctx, |d| match d.tag_name(n) {
+        Some("input") => {
+            let t = d
+                .attribute(n, "type")
+                .unwrap_or("text")
+                .trim()
+                .to_ascii_lowercase();
+            if t.is_empty() { "text".to_owned() } else { t }
+        }
+        Some("button") => d
+            .attribute(n, "type")
+            .map(|t| t.trim().to_ascii_lowercase())
+            .filter(|t| matches!(t.as_str(), "button" | "reset"))
+            .unwrap_or_else(|| "submit".to_owned()),
+        _ => String::new(),
+    })?;
+    Ok(string(&t))
+}
+
+fn name(this: &JsValue, _: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    attr_or_empty(this, ctx, "name")
+}
+
+fn focus(this: &JsValue, _: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = this_element(this, ctx)?;
+    with_dom_mut(ctx, |d| {
+        if d.control_kind(n).is_some() {
+            d.set_focused(Some(n));
+        }
+    })?;
+    Ok(JsValue::undefined())
+}
+
+fn blur(this: &JsValue, _: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = this_element(this, ctx)?;
+    with_dom_mut(ctx, |d| {
+        if d.focused() == Some(n) {
+            d.set_focused(None);
+        }
+    })?;
+    Ok(JsValue::undefined())
+}
+
+fn active_element(_: &JsValue, _: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = with_dom(ctx, |d| {
+        d.focused().or_else(|| d.find_element(d.root(), "body"))
+    })?;
+    wrap_opt(n, ctx)
+}
+
+// ----- element.style -----------------------------------------------------
+
+fn style(this: &JsValue, _: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = this_element(this, ctx)?;
+    let (existing, proto) = {
+        let s = host(ctx)?;
+        (s.style_objects.get(&n).cloned(), s.style_proto.clone())
+    };
+    if let Some(obj) = existing {
+        return Ok(obj.into());
+    }
+    let obj = JsObject::with_object_proto(ctx.intrinsics());
+    obj.set_prototype(Some(proto));
+    let s = host(ctx)?;
+    s.style_objects.insert(n, obj.clone());
+    s.style_nodes.insert(obj.clone(), n);
+    Ok(obj.into())
+}
+
+/// `el.style = "color: red"` sets the whole attribute, like `cssText`.
+fn set_style(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = this_element(this, ctx)?;
+    let text = arg_string(args, 0, ctx)?;
+    with_dom_mut(ctx, |d| d.set_attribute(n, "style", text))?;
+    Ok(JsValue::undefined())
+}
+
+fn style_node(this: &JsValue, ctx: &mut Context) -> JsResult<NodeId> {
+    let obj = this
+        .as_object()
+        .ok_or_else(|| type_error("not a CSSStyleDeclaration"))?;
+    host(ctx)?
+        .style_nodes
+        .get(&obj)
+        .copied()
+        .ok_or_else(|| type_error("not a CSSStyleDeclaration"))
+}
+
+fn style_text(n: NodeId, ctx: &mut Context) -> JsResult<String> {
+    with_dom(ctx, |d| d.attribute(n, "style").unwrap_or("").to_owned())
+}
+
+fn style_get(this: &JsValue, name: &str, ctx: &mut Context) -> JsResult<JsValue> {
+    let n = style_node(this, ctx)?;
+    let text = style_text(n, ctx)?;
+    Ok(string(&crate::style_attr::get(&text, name)))
+}
+
+fn write_style(
+    n: NodeId,
+    name: &str,
+    value: Option<&str>,
+    important: bool,
+    ctx: &mut Context,
+) -> JsResult<()> {
+    if value.is_some_and(|v| !crate::style_attr::acceptable_value(v)) {
+        return Ok(());
+    }
+    let text = style_text(n, ctx)?;
+    let updated = crate::style_attr::set(&text, name, value, important);
+    with_dom_mut(ctx, |d| {
+        if updated.is_empty() {
+            d.remove_attribute(n, "style");
+        } else {
+            d.set_attribute(n, "style", updated);
+        }
+    })
+}
+
+fn style_set(this: &JsValue, name: &str, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = style_node(this, ctx)?;
+    let value = match arg(args, 0) {
+        v if v.is_null_or_undefined() => None,
+        v => Some(v.to_string(ctx)?.to_std_string_escaped()),
+    };
+    write_style(n, name, value.as_deref(), false, ctx)?;
+    Ok(JsValue::undefined())
+}
+
+fn property_name(args: &[JsValue], ctx: &mut Context) -> JsResult<String> {
+    let name = arg_string(args, 0, ctx)?;
+    Ok(if name.starts_with("--") {
+        name
+    } else {
+        name.to_ascii_lowercase()
+    })
+}
+
+fn get_property_value(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let name = property_name(args, ctx)?;
+    style_get(this, &name, ctx)
+}
+
+fn set_property(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = style_node(this, ctx)?;
+    let name = property_name(args, ctx)?;
+    let value = arg_string(args, 1, ctx)?;
+    let important = arg_string(args, 2, ctx)?.eq_ignore_ascii_case("important");
+    write_style(n, &name, Some(&value), important, ctx)?;
+    Ok(JsValue::undefined())
+}
+
+fn remove_property(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = style_node(this, ctx)?;
+    let name = property_name(args, ctx)?;
+    let text = style_text(n, ctx)?;
+    let old = crate::style_attr::get(&text, &name);
+    write_style(n, &name, None, false, ctx)?;
+    Ok(string(&old))
+}
+
+fn css_text(this: &JsValue, _: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = style_node(this, ctx)?;
+    let text = style_text(n, ctx)?;
+    Ok(string(&crate::style_attr::serialize(
+        &crate::style_attr::parse(&text),
+    )))
+}
+
+fn set_css_text(this: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
+    let n = style_node(this, ctx)?;
+    let text = arg_string(args, 0, ctx)?;
+    with_dom_mut(ctx, |d| d.set_attribute(n, "style", text))?;
+    Ok(JsValue::undefined())
+}
+
 // ----- Document ----------------------------------------------------------
 
 fn title(_: &JsValue, _: &[JsValue], ctx: &mut Context) -> JsResult<JsValue> {
@@ -981,6 +1302,17 @@ pub(crate) fn dispatch(
     target: Option<NodeId>,
     kind: &str,
 ) -> (bool, Vec<String>) {
+    dispatch_init(ctx, target, kind, &crate::EventInit::default())
+}
+
+/// Dispatches with explicit options: non-bubbling events (`focus`, `blur`,
+/// `change` is bubbling) stop at the target; keyboard events carry `key`.
+pub(crate) fn dispatch_init(
+    ctx: &mut Context,
+    target: Option<NodeId>,
+    kind: &str,
+    init: &crate::EventInit,
+) -> (bool, Vec<String>) {
     let mut errors = Vec::new();
     let Ok(state) = host(ctx) else {
         return (false, errors);
@@ -994,7 +1326,12 @@ pub(crate) fn dispatch(
             .collect(),
         None => Vec::new(),
     };
-    path.push(Target::Window);
+    if init.no_bubble {
+        path.truncate(1);
+    }
+    if !init.no_bubble || target.is_none() {
+        path.push(Target::Window);
+    }
 
     let event = JsObject::with_object_proto(ctx.intrinsics());
     let target_value = match target {
@@ -1004,7 +1341,10 @@ pub(crate) fn dispatch(
     let setup: JsResult<()> = (|| {
         event.set(js_string!("type"), string(kind), false, ctx)?;
         event.set(js_string!("target"), target_value.clone(), false, ctx)?;
-        event.set(js_string!("bubbles"), true, false, ctx)?;
+        event.set(js_string!("bubbles"), !init.no_bubble, false, ctx)?;
+        if let Some(key) = &init.key {
+            event.set(js_string!("key"), string(key), false, ctx)?;
+        }
         event.set(js_string!("cancelable"), true, false, ctx)?;
         for (name, f) in [
             ("preventDefault", prevent_default as NativeFunctionPointer),

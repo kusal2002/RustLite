@@ -3,10 +3,11 @@
 An original, cross-platform web browser engine written in Rust: HTML, DOM, CSS,
 layout, paint and rendering are RustLite code, not a wrapped engine.
 
-**Status:** Phase 9. RustLite browses: it loads pages over HTTP(S) with
-certificate validation, follows links, keeps history, has tabs and
-find-in-page, runs page JavaScript (Boa engine, a DOM subset and click
-events), and renders with its own
+**Status:** Phase 10 (part 1). RustLite browses: it loads pages over
+HTTP(S) with certificate validation, follows links, keeps history, has tabs
+and find-in-page, runs page JavaScript (Boa engine, a DOM subset, timers,
+animation frames, events), has working form fields and GET forms, and
+renders with its own
 HTML parser, CSS engine, block/inline layout, glyph rasterizer and CPU renderer
 (each verified against Chromium on golden fixtures). Normal flow only; no
 floats or flex/grid yet, and no sandbox: see
@@ -41,7 +42,8 @@ address bar is focused; type a URL or path and press Enter.
 Shortcuts (Cmd instead of Ctrl on macOS): Ctrl+L / Alt+D / F6 address bar ·
 Alt+←/→ back/forward · F5 / Ctrl+R reload · Esc stop · Ctrl+T new tab ·
 Ctrl+W close tab · Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+1–9 switch tabs ·
-Ctrl+F find (Enter / Shift+Enter, F3 next/previous) · Ctrl+C/X/V in text
+Ctrl+F find (Enter / Shift+Enter, F3 next/previous) · Tab / Shift+Tab move
+between form fields · Ctrl+C/X/V in text
 fields · Ctrl+Q quit · F12 debug overlay · wheel, ↑/↓, Page Up/Down,
 Space/Shift+Space, Home/End scroll. Click links to follow them;
 Ctrl+click or middle-click opens them in a background tab.

@@ -98,7 +98,7 @@ Not supported yet:
 ### Layout (LAYOUT-001) — Tested, verified on reference browser
 
 Evidence: [LAYOUT-001](../research/specifications/LAYOUT-001.md),
-`crates/layout/tests/golden.rs` (9/9 fixtures; max 0.032px from Chromium 152).
+`crates/browser-core/tests/layout_golden.rs` (13/13 fixtures incl. `form-controls`; within each fixture's tolerance of Chromium 152).
 
 Supported: block boxes and anonymous block boxes, `display: none`/`contents`;
 CSS 2.1 width resolution with `auto` margins and percentages; `height` px/%/auto;
@@ -174,7 +174,42 @@ modules, `document.write`, scripts inserted by `innerHTML`.
 | `Document` | `title` (get/set), `body`, `head`, `documentElement`, `getElementById`, `querySelector(All)`, `getElementsByTagName`, `createElement`, `createTextNode` |
 | Events | `click` from the mouse and `click()`; bubbling to document and window (no capture phase); `preventDefault` (cancels link navigation), `stopPropagation`, `stopImmediatePropagation`, `defaultPrevented`; `on*` attributes and `return false` |
 
-Not yet: timers (`setTimeout`), `fetch`/XHR, `style` objects (use
-`setAttribute('style', …)`), `dataset`, live collections (lists are
-snapshots), keyboard/input events and form controls, `Event` constructors,
-images or stylesheets inserted by scripts (they are not loaded).
+### Web APIs (WEBAPI-001)
+
+| API | Supported |
+|---|---|
+| Timers | `setTimeout`, `setInterval` (callbacks or code strings, extra arguments), `clearTimeout`, `clearInterval`; 4 ms clamp after 5 nested levels; at most 10,000 active timers |
+| Frames | `requestAnimationFrame` (timestamp argument, ~60 Hz while requested), `cancelAnimationFrame`, `performance.now()` (0.1 ms resolution) |
+| `element.style` | camelCase and hyphenated properties for everything the style system supports, `cssText`, `getPropertyValue`, `setProperty` (incl. `!important` and custom properties), `removeProperty`; `el.style = "…"`. Values with `;`, `{` or `}` are ignored |
+| Form controls | `value`, `checked`, `type`, `name`, `focus()`, `blur()`, `document.activeElement` |
+| Events | `keydown`/`keyup` (with `key`) at the focused element or body; `input`, `change`, `focus`, `blur` (not bubbling), `submit` (cancelable) |
+| Resources | images and stylesheets that scripts add are fetched |
+
+Not yet: `fetch`/XHR, `dataset`, live collections (lists are snapshots),
+`Event` constructors and `dispatchEvent`, `KeyboardEvent.code`/modifier
+flags, scripts inserted by scripts, composition/IME input, timers in
+background tabs are not throttled.
+
+### Forms (FORM-001) — layout verified on reference browser
+
+Rendered as atomic inlines: text fields (`text`, `password` with bullets,
+`search`, `email`, `url`, `tel`, `number` and unknown types as text, with
+placeholders), `<button>` and `<input type=submit|reset|button|image>`
+(text label), checkboxes and radios (13×13, accent-colored when checked);
+`hidden` inputs are not rendered. Geometry matches Chromium 152 in the
+`form-controls` layout fixture (13/13 fixtures pass, ≤0.02 px): text fields
+are `c × size + (M − c)` wide (`c` = rounded "x" advance, `M` = rounded
+font bounding box width), one line tall, and baseline-aligned on their text;
+toggles align their bottom border edge. With Courier New 20px and Verdana
+16px the measured Chromium widths deviate from that formula by up to 1 px.
+
+Interaction: click focuses fields, toggles checkboxes, selects radios
+(groups by `name` within a form) and presses buttons; typing, Backspace,
+Delete, ←/→, Home/End edit the focused field; Tab/Shift+Tab move focus
+through controls; Enter in a field or on a submit button submits the form;
+Ctrl/Cmd+V pastes into a field. **Submission:** GET only, fields as
+`application/x-www-form-urlencoded` (text values, checked boxes/radios,
+`hidden` inputs, the submitter's name/value; disabled controls skipped).
+POST forms are refused with a log message. Not yet: `<textarea>`,
+`<select>`, `<label>` activation, text selection, scrolling inside fields,
+validation, `:focus`/`:checked` selectors, `tabindex`.

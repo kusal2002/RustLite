@@ -28,6 +28,22 @@
   <div id="reset" class="button" onclick="resetTasks(); return false">Reset tasks</div>
 </div>
 
+<div class="card">
+  <p>Live: <span id="clock">--</span> · frames drawn: <span id="frames">0</span></p>
+  <div id="track" style="background-color: #e0e0e0; height: 8px; width: 300px">
+    <div id="bar" style="background-color: #2e7d32; height: 8px; width: 0px"></div>
+  </div>
+</div>
+
+<div class="card">
+  <form id="greet" action="https://example.com/">
+    Name: <input id="name" name="name" placeholder="Type your name">
+    <label><input id="loud" type="checkbox"> loud</label>
+    <button id="send">Greet</button>
+  </form>
+  <p id="greeting">Nobody greeted yet.</p>
+</div>
+
 <p><a id="guarded" href="https://example.com/">This link is handled by a script</a></p>
 
 <script>
@@ -60,6 +76,28 @@
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('status').textContent =
       `Scripts ran: ${document.querySelectorAll('#tasks li').length} tasks created.`;
+  });
+  const started = performance.now();
+  setInterval(() => {
+    document.getElementById('clock').textContent =
+      `${((performance.now() - started) / 1000).toFixed(0)} s since load`;
+  }, 1000);
+
+  let frames = 0;
+  function animate() {
+    frames += 1;
+    document.getElementById('frames').textContent = String(frames);
+    document.getElementById('bar').style.width = `${Math.min(300, frames * 5)}px`;
+    if (frames < 60) requestAnimationFrame(animate);
+  }
+  requestAnimationFrame(animate);
+
+  document.getElementById('greet').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const name = document.getElementById('name').value || 'stranger';
+    const loud = document.getElementById('loud').checked;
+    const text = `Hello, ${name}!`;
+    document.getElementById('greeting').textContent = loud ? text.toUpperCase() : text;
   });
   console.log('interactive page ready');
 </script>

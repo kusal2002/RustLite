@@ -43,6 +43,8 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | PERF-003 | Memory report per subsystem; bounded HTTP subresource cache; restyle on resize only with viewport units | Tested | `memory_report_covers_each_subsystem`; cache unit tests and `cacheable_subresources_are_reused_until_reload`; `resize_restyles_only_viewport_dependent_documents` |
 | SCRIPT-001 | JavaScript (Boa): classic scripts in order, DOM subset, click events, `on*` handlers, limits | Tested | `rustlite-script` unit tests; page tests; `external_scripts_run_in_document_order`; scripted windowed clicks on `tests/pages/interactive.html` |
 | SEC-002 | Mixed-content blocking; script MIME refusal; seeded fuzzing in CI; isolation ADR | Tested | `https_pages_do_not_load_http_subresources`; `fuzz.rs` (3 targets); ADR-0005 |
+| WEBAPI-001 | Timers, animation frames, `performance.now`, event loop in the window and headless renders, `element.style`, fetching resources scripts insert | Tested | `rustlite-script` timer/style tests; `timers_change_the_page_later`; `images_inserted_by_timers_are_fetched` |
+| FORM-001 | Form controls (text, password, buttons, checkbox, radio): layout, paint, focus, editing, keyboard events, GET submission | Verified on reference browser (layout) / Tested | `form-controls` layout fixture vs Chromium 152; `interaction.rs` (9 tests); scripted window typing |
 | CSS-002 | `font` shorthand, `min-/max-width/height`, `light-dark()` | Verified on reference browser (fixture set) | `font-shorthand` style and `min-max-sizes` layout fixtures match Chromium 152 |
 | JS-001 | JS runtime | Deferred (Phase 9) | — |
 
@@ -50,7 +52,7 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 | Platform | Build | Tests | Window | Notes |
 |---|---|---|---|---|
-| Windows 11 x64 (MSVC) | ✅ | ✅ 270/270 | ✅ | Ryzen 5 5600G, Radeon iGPU |
+| Windows 11 x64 (MSVC) | ✅ | ✅ 288/288 | ✅ | Ryzen 5 5600G, Radeon iGPU |
 | Linux x64 | ✅ CI | ✅ CI (run 38864693788) | Unverified | No display in CI; text layout goldens skip (no Times New Roman) |
 | macOS | ✅ CI | ✅ CI (run 38864693788) | Unverified | Layout text goldens pin Times New Roman and skip if its metrics differ from the reference machine |
 
@@ -256,3 +258,37 @@ Tested · Verified on reference browser · Blocked · Deferred.
   browser process (isolation designed, not built).
 - **Next:** Phase 10 candidates: timers and an event loop, forms and
   keyboard input, then the process split (ADR-0005).
+
+### 2026-10-16 — Phase 10 (part 1): Web APIs, forms and keyboard input
+
+- **Scope chosen with the user:** Web APIs first (advanced CSS layout and
+  process isolation remain for later Phase 10 parts).
+- **What:** timers (`setTimeout`/`setInterval`), `requestAnimationFrame`,
+  `performance.now()`; the window's event loop sleeps until the next page
+  timer or frame and paces animation at ~60 Hz; headless renders let timers
+  due within 500 ms of load run; `element.style`; resources inserted by
+  scripts are fetched (each element requested once per document); form
+  controls rendered as atomic inlines with Chromium-matched sizes and
+  baselines; focus, caret, typing, Tab navigation, Ctrl/Cmd+V into fields;
+  `keydown`/`keyup`/`input`/`change`/`focus`/`blur`/`submit` events; GET form
+  submission; script `value`/`checked`/`focus()`/`activeElement`.
+- **Verification:** a new `form-controls` layout fixture matches Chromium 152
+  (all 13 layout fixtures pass, ≤0.02 px); the intrinsic-width formula was
+  derived from 60 Chromium measurements over 4 fonts × 3 sizes × 5 `size`
+  values. A scripted window run typed "Ada Lovelace", edited it to
+  "Ada Byron", ticked a checkbox and pressed Enter; the page's submit handler
+  showed "HELLO, ADA BYRON!", while its clock (`setInterval`) and
+  progress-bar animation (`requestAnimationFrame` + `style.width`) ran.
+  The very first such run did not register the typing; I could not
+  determine why (no logs were captured for it). Three later runs with key
+  logging all worked, and the same sequence is now an automated test.
+- **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 288 passed
+  · release build ✅ · 18,000 extra release fuzz cases (interaction and new
+  bindings included), no failures.
+- **Measurements:** binary 11.0 MiB (+0.2 MiB); the demo page after typing:
+  26.6 MB working set, 12.0 MB private.
+- **Not done:** POST forms, `<textarea>`, `<select>`, text selection,
+  `:focus`/`:checked`, `fetch`, throttling background-tab timers, a total
+  script time limit.
+- **Next (Phase 10 part 2 or 3):** advanced CSS layout (inline-block,
+  floats, positioning, flexbox) or the process split (ADR-0005).

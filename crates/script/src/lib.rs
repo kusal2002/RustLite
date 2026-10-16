@@ -17,12 +17,16 @@
 
 mod bindings;
 mod serialize;
+mod style_attr;
+mod timers;
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use boa_engine::{Context, JsObject, JsValue, Source};
 use rustlite_dom::{Document, NodeId};
 
+pub use bindings::uncheck_radio_group;
 pub use serialize::serialize_children;
 
 /// Iterations one loop may run before the script is stopped.
@@ -58,6 +62,10 @@ pub(crate) struct HostState {
     /// Compiled `on*` attribute handlers, keyed by node, event and source.
     pub attribute_handlers: HashMap<(NodeId, String), (String, JsObject)>,
     pub node_proto: JsObject,
+    /// `element.style` objects, one per element, and their elements.
+    pub style_objects: HashMap<NodeId, JsObject>,
+    pub style_nodes: HashMap<JsObject, NodeId>,
+    pub style_proto: JsObject,
     pub element_proto: JsObject,
     pub document_proto: JsObject,
     pub dispatch: DispatchFlags,
@@ -65,6 +73,9 @@ pub(crate) struct HostState {
     pub dispatching: bool,
     /// `console.*` output, newest last (bounded).
     pub console: Vec<String>,
+    /// Time origin for timers and `performance.now()`.
+    pub origin: Instant,
+    pub timers: timers::Timers,
 }
 
 /// Cap on retained console lines.
@@ -78,6 +89,15 @@ impl HostState {
         }
         self.console.push(line);
     }
+}
+
+/// Options for [`ScriptHost::dispatch_event_init`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EventInit {
+    /// The event stops at its target (e.g. `focus`, `blur`).
+    pub no_bubble: bool,
+    /// `event.key` for keyboard events.
+    pub key: Option<String>,
 }
 
 /// Result of running scripts or dispatching an event.
@@ -130,7 +150,7 @@ impl ScriptHost {
 
     /// Runs a classic script against `dom`. `name` labels errors.
     pub fn run_script(&mut self, dom: &mut Document, source: &str, name: &str) -> Outcome {
-        let generation = dom.generation();
+        let generation = (dom.generation(), dom.form_generation());
         let errors = self.with_document(dom, |ctx| {
             let mut errors = Vec::new();
             if let Err(e) = ctx.eval(Source::from_bytes(source.as_bytes())) {
@@ -145,7 +165,7 @@ impl ScriptHost {
             tracing::warn!(target: "console", "uncaught {e}");
         }
         Outcome {
-            mutated: dom.generation() != generation,
+            mutated: (dom.generation(), dom.form_generation()) != generation,
             errors,
             default_prevented: false,
         }
@@ -154,11 +174,30 @@ impl ScriptHost {
     /// Dispatches a bubbling event of type `kind` at `target` (then its
     /// ancestors, the document and the window).
     pub fn dispatch_event(&mut self, dom: &mut Document, target: NodeId, kind: &str) -> Outcome {
-        let generation = dom.generation();
+        let generation = (dom.generation(), dom.form_generation());
         let (prevented, errors) =
             self.with_document(dom, |ctx| bindings::dispatch(ctx, Some(target), kind));
         Outcome {
-            mutated: dom.generation() != generation,
+            mutated: (dom.generation(), dom.form_generation()) != generation,
+            errors,
+            default_prevented: prevented,
+        }
+    }
+
+    /// Dispatches `kind` at `target` with explicit options.
+    pub fn dispatch_event_init(
+        &mut self,
+        dom: &mut Document,
+        target: NodeId,
+        kind: &str,
+        init: &EventInit,
+    ) -> Outcome {
+        let before = (dom.generation(), dom.form_generation());
+        let (prevented, errors) = self.with_document(dom, |ctx| {
+            bindings::dispatch_init(ctx, Some(target), kind, init)
+        });
+        Outcome {
+            mutated: (dom.generation(), dom.form_generation()) != before,
             errors,
             default_prevented: prevented,
         }
@@ -166,11 +205,11 @@ impl ScriptHost {
 
     /// Dispatches an event at the window only (e.g. `load`).
     pub fn dispatch_window_event(&mut self, dom: &mut Document, kind: &str) -> Outcome {
-        let generation = dom.generation();
+        let generation = (dom.generation(), dom.form_generation());
         let (prevented, errors) =
             self.with_document(dom, |ctx| bindings::dispatch(ctx, None, kind));
         Outcome {
-            mutated: dom.generation() != generation,
+            mutated: (dom.generation(), dom.form_generation()) != generation,
             errors,
             default_prevented: prevented,
         }
@@ -194,6 +233,46 @@ impl ScriptHost {
                         || state.property_handlers.contains_key(&(n, kind.to_owned()))
                         || dom.attribute(n, &attr).is_some()
                 })
+    }
+
+    /// When the earliest timer is due, if any timer is active.
+    pub fn next_timer_due(&mut self) -> Option<Instant> {
+        let state = self.state();
+        let due = state
+            .timers
+            .active
+            .values()
+            .map(|t| t.due)
+            .min_by(f64::total_cmp)?;
+        Some(state.origin + std::time::Duration::from_secs_f64(due.max(0.0) / 1000.0))
+    }
+
+    /// Runs timer callbacks due at `now` (deadline order; at most 1,000 per
+    /// call so a page cannot starve the browser).
+    pub fn run_due_timers(&mut self, dom: &mut Document, now: Instant) -> Outcome {
+        let generation = (dom.generation(), dom.form_generation());
+        let errors = self.with_document(dom, |ctx| timers::run_due(ctx, now));
+        Outcome {
+            mutated: (dom.generation(), dom.form_generation()) != generation,
+            errors,
+            default_prevented: false,
+        }
+    }
+
+    /// Is a `requestAnimationFrame` callback waiting for the next frame?
+    pub fn wants_animation_frame(&mut self) -> bool {
+        !self.state().timers.frames.is_empty()
+    }
+
+    /// Runs the waiting animation frame callbacks (before painting a frame).
+    pub fn run_animation_frames(&mut self, dom: &mut Document, now: Instant) -> Outcome {
+        let generation = (dom.generation(), dom.form_generation());
+        let errors = self.with_document(dom, |ctx| timers::run_frames(ctx, now));
+        Outcome {
+            mutated: (dom.generation(), dom.form_generation()) != generation,
+            errors,
+            default_prevented: false,
+        }
     }
 
     /// Console output so far (bounded).

@@ -14,7 +14,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 
-use rustlite_browser_core::Page;
+use rustlite_browser_core::{Page, PageKey};
 use rustlite_dom::{Document, NodeId};
 use rustlite_fonts::FontContext;
 use rustlite_paint::Size;
@@ -259,6 +259,22 @@ fn pipeline_survives_mutated_pages() {
             page.display_list();
             let _ = page.memory_report();
             let _ = page.subresource_requests();
+            // Interaction: clicks focus/toggle controls, keys edit them.
+            for (x, y) in [(10.0, 10.0), (60.0, 30.0), (150.0, 80.0), (300.0, 200.0)] {
+                let _ = page.click(x, y);
+                for key in [
+                    PageKey::Tab { shift: false },
+                    PageKey::Text("x\u{0}y".into()),
+                    PageKey::Backspace,
+                    PageKey::Left,
+                    PageKey::Delete,
+                    PageKey::Enter,
+                ] {
+                    let _ = page.key_down(&key);
+                    page.key_up(&key);
+                }
+                page.display_list();
+            }
         });
         fonts = page.take_fonts();
     }
@@ -292,6 +308,18 @@ const CALLS: &[&str] = &[
     "$N.parentNode.firstChild.nextSibling",
     "$N.childNodes.length",
     "$N.contains($M)",
+    "$N.value = $A",
+    "$N.checked = $A",
+    "$N.focus()",
+    "$N.blur()",
+    "document.activeElement",
+    "$N.style.color = $A",
+    "$N.style.cssText = $A",
+    "$N.style.setProperty($A, $B)",
+    "setTimeout(() => { $N.remove(); }, 0)",
+    "setInterval(() => { $N.textContent = $A; }, 1)",
+    "setTimeout($A, 0)",
+    "requestAnimationFrame(() => { $M.appendChild($N); })",
 ];
 
 const VALUES: &[&str] = &[
@@ -337,7 +365,9 @@ fn dom_bindings_survive_random_calls() {
             program.push_str(&format!("try {{ {call}; }} catch (e) {{}}\n"));
         }
         let html = "<!DOCTYPE html><title>t</title><div id=a class=x><p>one <b>two</b></p>\
-                    <ul><li>1</li><li>2</li></ul></div><a href=/x onclick='return false'>l</a>";
+                    <ul><li>1</li><li>2</li></ul></div><a href=/x onclick='return false'>l</a>\
+                    <form><input id=i value=v><input type=checkbox><input type=radio name=r>\
+                    <button>b</button></form>";
         run_case(&format!("bindings-{i}.js"), &program, || {
             let mut doc = rustlite_html::parse_document(html).document;
             let mut host = rustlite_script::ScriptHost::new("https://fuzz.test/");
@@ -352,6 +382,10 @@ fn dom_bindings_survive_random_calls() {
             for &t in targets.iter().step_by(3) {
                 host.dispatch_event(&mut doc, t, "click");
             }
+            check_tree(&doc);
+            let later = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            host.run_due_timers(&mut doc, later);
+            host.run_animation_frames(&mut doc, later);
             check_tree(&doc);
         });
     }

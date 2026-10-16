@@ -9,6 +9,7 @@
 
 mod block;
 mod build;
+mod controls;
 mod find;
 mod geometry;
 mod inline;
@@ -23,6 +24,7 @@ use rustlite_fonts::FontContext;
 use rustlite_paint::{GlyphRun, ImageData};
 use rustlite_style::{ComputedStyle, ComputedStyles};
 
+pub use controls::{Control, TOGGLE_SIZE};
 pub use find::{FindMatch, find_text};
 pub use geometry::{Edges, RectF};
 pub use paint::{canvas_background, paint};
@@ -88,11 +90,13 @@ pub enum InlineItem {
         node: NodeId,
         style: Rc<ComputedStyle>,
     },
-    /// An atomic inline-level box: a replaced element such as `<img>`.
+    /// An atomic inline-level box: a replaced element such as `<img>`, or a
+    /// form control.
     Atomic {
         node: NodeId,
         style: Rc<ComputedStyle>,
         image: Option<Rc<ImageData>>,
+        control: Option<Control>,
     },
 }
 
@@ -269,6 +273,70 @@ pub fn tree_size(tree: &LayoutTree) -> TreeSize {
         }
     }
     size
+}
+
+/// Where a focused text control's caret goes, in document CSS px.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CaretGeometry {
+    /// The control's border box.
+    pub border_box: RectF,
+    pub x: f32,
+    pub top: f32,
+    pub height: f32,
+}
+
+/// Caret position after the first `chars` characters of `node`'s text
+/// control value (password fields measure their bullets).
+pub fn caret_geometry(
+    tree: &LayoutTree,
+    fonts: &mut FontContext,
+    node: NodeId,
+    chars: usize,
+) -> Option<CaretGeometry> {
+    let mut stack: Vec<&BlockBox> = tree.root.iter().collect();
+    while let Some(b) = stack.pop() {
+        match &b.children {
+            BlockChildren::Blocks(kids) => stack.extend(kids.iter()),
+            BlockChildren::Inline(inline) => {
+                for f in inline.lines.iter().flat_map(|l| &l.fragments) {
+                    let InlineItem::Atomic {
+                        node: n,
+                        style,
+                        control: Some(control),
+                        ..
+                    } = &inline.items[f.item]
+                    else {
+                        continue;
+                    };
+                    if *n != node {
+                        continue;
+                    }
+                    let font = inline::style_font(style, fonts);
+                    let shown: String = if control.placeholder {
+                        String::new()
+                    } else {
+                        control.text.chars().take(chars).collect()
+                    };
+                    let width = inline::shape(&shown, &font, fonts).1;
+                    let pad = |l: rustlite_style::ComputedLength| match l {
+                        rustlite_style::ComputedLength::Px(v) => v,
+                        rustlite_style::ComputedLength::Percentage(_) => 0.0,
+                    };
+                    let left = style.border_width[3] + pad(style.padding[3]);
+                    let top = style.border_width[0] + pad(style.padding[0]);
+                    let bottom = style.border_width[2] + pad(style.padding[2]);
+                    return Some(CaretGeometry {
+                        border_box: f.rect,
+                        x: f.rect.x + left + width,
+                        top: f.rect.y + top,
+                        height: (f.rect.height - top - bottom).max(0.0),
+                    });
+                }
+            }
+            BlockChildren::Empty => {}
+        }
+    }
+    None
 }
 
 /// Border-box rectangles of every element that generated boxes or text.

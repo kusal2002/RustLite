@@ -13,9 +13,16 @@ split and OS sandboxes are designed in
 
 - Engine: Boa 0.22 (Rust), without `Intl`/`Temporal`
   ([ADR-0004](../research/decisions/ADR-0004-javascript-engine-boa.md)).
-- Scripts see only `window`, `document`, `console`, `location.href` and a DOM
-  subset. No timers, network (`fetch`/XHR), storage, cookies, clipboard,
-  file or browser-UI APIs exist for pages.
+- Scripts see only `window`, `document`, `console`, `location.href`,
+  timers, animation frames, `performance.now()` and a DOM subset. No network
+  (`fetch`/XHR), storage, cookies, clipboard, file or browser-UI APIs exist
+  for pages.
+- Timers are bounded (10,000 active per page; at most 1,000 callbacks per
+  event-loop turn) and run on the UI thread between events; `performance.now()`
+  is coarsened to 0.1 ms.
+- Forms submit by GET only and the resulting navigation is a page-initiated
+  navigation, so the usual URL policy applies (no `file:`, `javascript:` or
+  `data:` targets).
 - DOM wrappers cannot be forged: the node behind a wrapper is looked up by
   object identity in Rust; objects made from our prototypes are rejected.
 - The page's DOM is lent to the engine only during a call; no shared

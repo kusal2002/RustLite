@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use rustlite_browser_core::{Initiator, NavState, Page, Tab, load_id_space};
+use rustlite_browser_core::{Initiator, NavState, Page, PageKey, Tab, load_id_space};
 use rustlite_diagnostics::FrameStats;
 use rustlite_net::{LoadResult, Loader, Url};
 use rustlite_paint::{DisplayList, Point, Size};
@@ -31,6 +31,9 @@ use crate::toolbar::{
 
 /// Frame-time samples kept for the exit summary (~4 s at 60 FPS).
 const FRAME_SAMPLES: usize = 240;
+/// Frame interval for `requestAnimationFrame`-driven redraws (~60 Hz).
+const ANIMATION_FRAME: std::time::Duration = std::time::Duration::from_micros(16_667);
+
 /// Tab titles are cut to this many characters before shaping.
 const TAB_TITLE_CHARS: usize = 60;
 
@@ -96,6 +99,8 @@ pub struct BrowserWindow {
     exit_after_frames: Option<u64>,
     /// New tabs run page scripts.
     javascript: bool,
+    /// When to draw the next animation frame (the active page asked for one).
+    next_frame: Option<Instant>,
     /// Opened on first use; `None` until then or if the platform has none.
     clipboard: Option<arboard::Clipboard>,
 }
@@ -181,6 +186,7 @@ impl BrowserWindow {
             stats: FrameStats::new(FRAME_SAMPLES),
             exit_after_frames,
             javascript,
+            next_frame: None,
             clipboard: None,
         };
         let slot = this.new_slot();
@@ -314,6 +320,34 @@ impl BrowserWindow {
         }
     }
 
+    /// Runs page timers due at `now` in every tab and starts animation
+    /// frames that are due. Called by the event loop when it wakes.
+    pub fn tick(&mut self, now: Instant) {
+        let mut changed = false;
+        for index in 0..self.tabs.len() {
+            if self.tabs[index].tab.run_timers(now) {
+                changed = true;
+                if index == self.active {
+                    self.sync_chrome();
+                }
+            }
+        }
+        if self.next_frame.is_some_and(|t| t <= now) {
+            self.next_frame = None;
+            changed = true;
+        }
+        if changed {
+            self.window.request_redraw();
+        }
+    }
+
+    /// When the event loop must wake next: the earliest page timer or the
+    /// next animation frame. `None` sleeps until an event arrives.
+    pub fn next_deadline(&mut self) -> Option<Instant> {
+        let timers = self.tabs.iter_mut().filter_map(|s| s.tab.next_timer());
+        timers.chain(self.next_frame).min()
+    }
+
     /// Logs every tab's memory and the shared caches (on exit).
     pub fn log_all_memory(&mut self) {
         for index in 0..self.tabs.len() {
@@ -398,7 +432,29 @@ impl BrowserWindow {
                 } else if self.find_focused() && self.find_key(key, text) {
                     return Ok(Flow::Continue);
                 }
-                if let Some(command) = commands::shortcut(key, self.modifiers) {
+                let command = commands::shortcut(key, self.modifiers);
+                // Tab and window shortcuts stay with the browser, as in
+                // other browsers; everything else goes to the page first.
+                let reserved = matches!(
+                    command,
+                    Some(
+                        Command::NewTab
+                            | Command::CloseTab
+                            | Command::NextTab
+                            | Command::PreviousTab
+                            | Command::SelectTab(_)
+                            | Command::Quit
+                            | Command::FocusAddress
+                    )
+                );
+                if !reserved
+                    && !self.slot().address.is_focused()
+                    && !self.find_focused()
+                    && self.page_key(key, text)
+                {
+                    return Ok(Flow::Continue);
+                }
+                if let Some(command) = command {
                     let repeatable = matches!(
                         command,
                         Command::ScrollLines(_)
@@ -411,6 +467,16 @@ impl BrowserWindow {
                     if !event.repeat || repeatable {
                         return Ok(self.execute(command));
                     }
+                }
+            }
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Released
+                    && !self.slot().address.is_focused()
+                    && !self.find_focused() =>
+            {
+                if let Some(key) = self.to_page_key(&event.logical_key, event.text.as_deref()) {
+                    self.slot_mut().tab.key_up(&key);
+                    self.window.request_redraw();
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -432,6 +498,62 @@ impl BrowserWindow {
             _ => {}
         }
         Ok(Flow::Continue)
+    }
+
+    /// The page's view of a key press. Shortcut chords (Ctrl/Cmd, and Alt
+    /// outside macOS) arrive as named keys, never as typed text.
+    fn to_page_key(&self, key: &Key, text: Option<&str>) -> Option<PageKey> {
+        let mods = self.modifiers;
+        let chord = mods.control_key()
+            || mods.super_key()
+            || (mods.alt_key() && !cfg!(target_os = "macos"));
+        Some(match key {
+            Key::Named(NamedKey::Enter) => PageKey::Enter,
+            Key::Named(NamedKey::Backspace) => PageKey::Backspace,
+            Key::Named(NamedKey::Delete) => PageKey::Delete,
+            Key::Named(NamedKey::ArrowLeft) => PageKey::Left,
+            Key::Named(NamedKey::ArrowRight) => PageKey::Right,
+            Key::Named(NamedKey::Home) => PageKey::Home,
+            Key::Named(NamedKey::End) => PageKey::End,
+            Key::Named(NamedKey::Tab) if !chord => PageKey::Tab {
+                shift: mods.shift_key(),
+            },
+            Key::Named(NamedKey::Escape) => PageKey::Escape,
+            Key::Named(NamedKey::Space) if !chord => PageKey::Text(" ".into()),
+            Key::Named(named) => PageKey::Other(format!("{named:?}")),
+            Key::Character(c) if chord => PageKey::Other(c.to_string()),
+            Key::Character(c) => PageKey::Text(text.unwrap_or(c).to_owned()),
+            _ => return None,
+        })
+    }
+
+    /// Offers a key press to the page. Returns true if the page used it.
+    fn page_key(&mut self, key: &Key, text: Option<&str>) -> bool {
+        let primary = if cfg!(target_os = "macos") {
+            self.modifiers.super_key()
+        } else {
+            self.modifiers.control_key()
+        };
+        // Paste into a focused page text field.
+        let paste = primary && matches!(key, Key::Character(c) if c.eq_ignore_ascii_case("v"));
+        let page_key = if paste && self.page_mut().focused().is_some() {
+            match self.clipboard_text() {
+                Some(t) => PageKey::Text(t.replace(['\r', '\n'], " ")),
+                None => return false,
+            }
+        } else {
+            match self.to_page_key(key, text) {
+                Some(k) => k,
+                None => return false,
+            }
+        };
+        let out = self.slot_mut().tab.key_down(&page_key);
+        if out.consumed || out.navigate.is_some() {
+            self.sync_chrome();
+            self.window.request_redraw();
+            return true;
+        }
+        false
     }
 
     /// Applies an address-bar edit. Returns true if the key was consumed.
@@ -785,10 +907,12 @@ impl BrowserWindow {
         // Page scripts see plain left clicks first and may cancel them
         // (e.g. links handled by script) or change the page.
         if !new_tab {
-            let cancelled = self.page_mut().dispatch_click(x, y);
-            // Scripts may have changed the title or the content.
+            let out = self.slot_mut().tab.click(x, y);
+            // Scripts or controls may have changed the title or content, or
+            // a form submission started a navigation.
             self.sync_chrome();
-            if cancelled {
+            self.window.request_redraw();
+            if out.consumed || out.navigate.is_some() {
                 return Flow::Continue;
             }
         }
@@ -930,6 +1054,12 @@ impl BrowserWindow {
             return Ok(Flow::Continue);
         };
         let start = Instant::now();
+        // Animation frame callbacks run right before the frame is painted.
+        if self.slot_mut().tab.wants_animation_frame()
+            && self.slot_mut().tab.run_animation_frame(start)
+        {
+            self.sync_chrome();
+        }
 
         if self.surface_size != Some((width, height)) {
             self.surface.resize(width, height)?;
@@ -982,6 +1112,13 @@ impl BrowserWindow {
         );
         self.window.pre_present_notify();
         buffer.present()?;
+
+        // Pace further animation frames instead of redrawing flat out.
+        self.next_frame = self
+            .slot_mut()
+            .tab
+            .wants_animation_frame()
+            .then(|| start + ANIMATION_FRAME);
 
         let elapsed = start.elapsed();
         self.stats.record(elapsed);

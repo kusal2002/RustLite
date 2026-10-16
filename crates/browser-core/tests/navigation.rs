@@ -74,6 +74,16 @@ fn handle(mut stream: TcpStream) {
               <script>console.log('last')</script>"
                 .to_vec(),
         ),
+        "/dynamic" => (
+            "200 OK",
+            "Content-Type: text/html\r\n".into(),
+            b"<title>Dynamic</title><body><script>setTimeout(() => {\
+                const img = document.createElement('img');\
+                img.id = 'late'; img.setAttribute('src', '/img.png');\
+                document.body.appendChild(img);\
+              }, 0);</script>"
+                .to_vec(),
+        ),
         "/app.js" => (
             "200 OK",
             "Content-Type: text/javascript\r\n".into(),
@@ -349,4 +359,22 @@ fn external_scripts_run_in_document_order() {
         ["last"],
         "a 500 script and an image served as a script are skipped"
     );
+}
+
+#[test]
+fn images_inserted_by_timers_are_fetched() {
+    let base = server();
+    let (mut t, rx) = tab();
+    t.navigate(&format!("{base}/dynamic")).unwrap();
+    pump(&mut t, &rx, 0);
+    let due = t.next_timer().expect("timer scheduled");
+    assert!(t.run_timers(due + Duration::from_millis(1)));
+    assert_eq!(t.pending_subresources(), 1, "the new image was requested");
+    pump(&mut t, &rx, 0);
+    let img = element(&mut t, "late");
+    let (_, tree) = t.page_mut().layout().unwrap();
+    assert_eq!(rustlite_layout::element_rects(tree)[&img].width, 4.0);
+    // Running timers again requests nothing twice.
+    assert!(!t.run_timers(due + Duration::from_secs(1)));
+    assert_eq!(t.pending_subresources(), 0);
 }

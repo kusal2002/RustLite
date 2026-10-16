@@ -38,10 +38,18 @@ a local HTTP server on `127.0.0.1` inside the test process; CI needs no
 external network. Certificate validation was checked manually against
 badssl.com (see NET-001); an offline TLS test with a test CA is a gap.
 
+## Interaction tests
+
+`crates/browser-core/tests/interaction.rs` drives the `Page` and `Tab` input
+APIs: focusing and typing, caret keys, Tab order, toggles and radio groups,
+GET submission URLs, script-visible events and their order, and the
+`tests/pages/interactive.html` demo end to end.
+
 ## Fuzzing
 
 `cargo test -p rustlite-browser-core --test fuzz` runs seeded mutation
-fuzzing (HTML parser tree invariants, whole pipeline, DOM bindings). Raise
+fuzzing (HTML parser tree invariants, whole pipeline including clicks and
+keys, DOM bindings including form properties, `style` and timers). Raise
 `RUSTLITE_FUZZ_ITERS` and vary `RUSTLITE_FUZZ_SEED` locally (use
 `--release`); failing inputs land in `target/fuzz-failures/`.
 

@@ -92,6 +92,8 @@ struct Face {
     /// `None` if rustybuzz cannot parse the face (it then shapes to nothing).
     shaper: Option<Shaper>,
     units_per_em: f32,
+    /// Width of the font's bounding box (`head` xMax - xMin), font units.
+    bbox_width: f32,
     ascent: f32,
     descent: f32,
     line_gap: f32,
@@ -314,6 +316,10 @@ impl FontContext {
         let parsed = ttf_parser::Face::parse(&data, index).ok()?;
         let face = Face {
             units_per_em: f32::from(parsed.units_per_em()),
+            bbox_width: {
+                let b = parsed.global_bounding_box();
+                f32::from(b.x_max) - f32::from(b.x_min)
+            },
             ascent: f32::from(parsed.ascender()),
             descent: -f32::from(parsed.descender()),
             line_gap: f32::from(parsed.line_gap()),
@@ -377,6 +383,13 @@ impl FontContext {
             descent: f.descent * scale,
             line_gap: f.line_gap * scale,
         }
+    }
+
+    /// The widest any glyph can be at `size`: the font bounding box width
+    /// (what browsers call the max char width when sizing text fields).
+    pub fn max_char_width(&self, font: FontId, size: f32) -> f32 {
+        let f = &self.faces[font.0 as usize];
+        f.bbox_width * size / f.units_per_em
     }
 
     fn covers(face: &ttf_parser::Face<'_>, c: char) -> bool {

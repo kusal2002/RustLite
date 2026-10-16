@@ -8,8 +8,11 @@
 //! and error pages.
 
 pub mod images;
+mod interaction;
 mod scripts;
 mod tab;
+
+pub use interaction::{InputOutcome, PageKey};
 
 pub use tab::{
     Initiator, NavState, NavigationError, Tab, error_page_html, load_id_space, parse_user_input,
@@ -137,6 +140,12 @@ pub struct Page {
     fonts: Option<FontContext>,
     /// Run page scripts (on by default; `--disable-javascript` turns it off).
     javascript: bool,
+    /// Number of times scripts changed the document (see [`Page::mutation_count`]).
+    mutations: u64,
+    /// Caret position (characters) in the focused text field.
+    caret: usize,
+    /// The focused field's value when it gained focus (for `change`).
+    focus_value: Option<String>,
     no_glyphs: NoGlyphs,
     display_list: DisplayList,
     paint_dirty: bool,
@@ -154,6 +163,9 @@ impl Page {
             scroll_y: 0.0,
             fonts: None,
             javascript: true,
+            mutations: 0,
+            caret: 0,
+            focus_value: None,
             no_glyphs: NoGlyphs,
             display_list: DisplayList::new(),
             paint_dirty: true,
@@ -385,6 +397,12 @@ impl Page {
         self.run_scripts_if_ready();
     }
 
+    /// Increments whenever scripts change the document; callers compare
+    /// values to learn that new subresources may be needed.
+    pub fn mutation_count(&self) -> u64 {
+        self.mutations
+    }
+
     /// Enables or disables JavaScript for documents loaded afterwards.
     pub fn set_javascript_enabled(&mut self, enabled: bool) {
         self.javascript = enabled;
@@ -406,6 +424,7 @@ impl Page {
     /// The document changed under script: rebuild the cascade (scripts may
     /// add `<style>` or change classes) and lay out again.
     fn document_mutated(&mut self) {
+        self.mutations += 1;
         if let Content::Html(doc) = &mut self.content {
             let sheets = &doc.external_sheets;
             doc.stylist = rustlite_style::stylist_with_external(&doc.dom, |n| sheets.get(&n));
@@ -466,31 +485,54 @@ impl Page {
         }
     }
 
-    /// Delivers a click at a point of the page viewport (device px) to page
-    /// scripts. Returns true if a listener cancelled it (`preventDefault`),
-    /// in which case the browser must not follow a link there.
-    pub fn dispatch_click(&mut self, x: f32, y: f32) -> bool {
-        let (scale, scroll) = (self.device_scale, self.scroll_y);
-        let Some(target) = self
-            .layout()
-            .and_then(|(_, tree)| rustlite_layout::hit_test(tree, x / scale, y / scale + scroll))
-        else {
-            return false;
-        };
+    /// Runs `f` against the page's script realm, if it has one; a mutation
+    /// restyles and relayouts. Returns whether the document changed.
+    fn with_script(
+        &mut self,
+        f: impl FnOnce(&mut rustlite_script::ScriptHost, &mut Document) -> rustlite_script::Outcome,
+    ) -> bool {
         let Content::Html(doc) = &mut self.content else {
             return false;
         };
         let Some(host) = doc.scripts.host.as_mut() else {
             return false;
         };
-        if !host.has_listeners(&doc.dom, target, "click") {
-            return false;
+        let out = f(host, &mut doc.dom);
+        for e in &out.errors {
+            tracing::warn!(target: "console", "uncaught {e}");
         }
-        let out = host.dispatch_event(&mut doc.dom, target, "click");
         if out.mutated {
             self.document_mutated();
         }
-        out.default_prevented
+        out.mutated
+    }
+
+    fn script_host(&mut self) -> Option<&mut rustlite_script::ScriptHost> {
+        match &mut self.content {
+            Content::Html(doc) => doc.scripts.host.as_mut(),
+            _ => None,
+        }
+    }
+
+    /// When the page's next timer is due, if it has one.
+    pub fn next_timer(&mut self) -> Option<std::time::Instant> {
+        self.script_host()?.next_timer_due()
+    }
+
+    /// Runs timers due at `now`. Returns whether the document changed.
+    pub fn run_timers(&mut self, now: std::time::Instant) -> bool {
+        self.with_script(|host, dom| host.run_due_timers(dom, now))
+    }
+
+    /// Does a `requestAnimationFrame` callback wait for the next frame?
+    pub fn wants_animation_frame(&mut self) -> bool {
+        self.script_host()
+            .is_some_and(rustlite_script::ScriptHost::wants_animation_frame)
+    }
+
+    /// Runs animation frame callbacks; call right before painting a frame.
+    pub fn run_animation_frame(&mut self, now: std::time::Instant) -> bool {
+        self.with_script(|host, dom| host.run_animation_frames(dom, now))
     }
 
     /// Console output of the page's scripts (empty without scripts).
@@ -695,6 +737,7 @@ impl Page {
                 Some((_, tree)) => rustlite_layout::paint(tree, scroll_y, scale, &mut list),
                 None => list.fill_rect(Rect::from_size(self.viewport), Color::WHITE),
             }
+            self.paint_focus(&mut list);
             self.display_list = list;
             self.paint_dirty = false;
             self.paint_count += 1;
@@ -977,10 +1020,10 @@ mod tests {
                  e.preventDefault(); document.title = 'clicked';\
              });</script>",
         );
-        assert!(page.dispatch_click(10.0, 10.0), "preventDefault reported");
+        assert!(page.click(10.0, 10.0).consumed, "preventDefault reported");
         assert_eq!(page.title().as_deref(), Some("clicked"));
         assert!(
-            !page.dispatch_click(10.0, 90.0),
+            !page.click(10.0, 90.0).consumed,
             "outside the listener's element"
         );
     }
@@ -1013,6 +1056,24 @@ mod tests {
     }
 
     #[test]
+    fn timers_change_the_page_later() {
+        let mut page = fontless(Size::new(200, 100));
+        page.load_html(
+            "test:doc",
+            "<!DOCTYPE html><body style='margin:0'><div id=box style='height: 10px'></div>\
+             <script>setTimeout(() => document.getElementById('box')\
+                 .setAttribute('style', 'height: 70px'), 30)</script>",
+        );
+        let due = page.next_timer().expect("timer scheduled");
+        assert!(!page.run_timers(due - std::time::Duration::from_millis(20)));
+        assert_eq!(page.layout().unwrap().1.document_height, 10.0);
+        assert!(page.run_timers(due));
+        assert_eq!(page.layout().unwrap().1.document_height, 70.0);
+        assert_eq!(page.next_timer(), None);
+        assert_eq!(page.mutation_count(), 1);
+    }
+
+    #[test]
     fn javascript_can_be_disabled() {
         let mut page = fontless(Size::new(200, 100));
         page.set_javascript_enabled(false);
@@ -1021,7 +1082,7 @@ mod tests {
             "<title>Static</title><script>document.title = 'Scripted'</script>",
         );
         assert_eq!(page.title().as_deref(), Some("Static"));
-        assert!(!page.dispatch_click(1.0, 1.0));
+        assert!(!page.click(1.0, 1.0).consumed);
     }
 
     #[test]

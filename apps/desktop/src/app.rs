@@ -120,6 +120,19 @@ impl ApplicationHandler<AppEvent> for App {
         }
     }
 
+    /// Runs page timers and schedules the next wake-up: the event loop
+    /// sleeps until the earliest timer or animation frame, or an event.
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let Some(window) = self.window.as_mut() else {
+            return;
+        };
+        window.tick(std::time::Instant::now());
+        event_loop.set_control_flow(match window.next_deadline() {
+            Some(deadline) => ControlFlow::WaitUntil(deadline),
+            None => ControlFlow::Wait,
+        });
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         let Some(window) = self.window.as_mut().filter(|w| w.id() == id) else {
             return;
@@ -181,6 +194,38 @@ pub struct HeadlessReport {
     pub raster_time: Duration,
 }
 
+/// Headless renders let page timers due this soon after load run first
+/// (`setTimeout(f, 0)`, short animations' first steps), as a user would see.
+const HEADLESS_TIMER_WINDOW: Duration = Duration::from_millis(500);
+
+/// Runs page timers due within [`HEADLESS_TIMER_WINDOW`] and one animation
+/// frame, delivering any loads the scripts start meanwhile.
+fn settle_timers(tab: &mut Tab, rx: &std::sync::mpsc::Receiver<rustlite_net::LoadResult>) {
+    let window_end = Instant::now() + HEADLESS_TIMER_WINDOW;
+    loop {
+        tab.run_timers(Instant::now());
+        while let Ok(r) = rx.try_recv() {
+            tab.on_load_result(r);
+        }
+        let next = tab.next_timer().filter(|&t| t <= window_end);
+        let now = Instant::now();
+        if (next.is_none() && tab.pending_subresources() == 0) || now >= window_end {
+            break;
+        }
+        let wait = next
+            .map_or(Duration::from_millis(50), |t| {
+                t.saturating_duration_since(now)
+            })
+            .min(Duration::from_millis(50));
+        if let Ok(r) = rx.recv_timeout(wait) {
+            tab.on_load_result(r);
+        }
+    }
+    if tab.wants_animation_frame() {
+        tab.run_animation_frame(Instant::now());
+    }
+}
+
 /// How long headless rendering waits for a page and its subresources.
 const HEADLESS_LOAD_TIMEOUT: Duration = Duration::from_secs(20);
 
@@ -219,6 +264,7 @@ pub fn render_headless(options: &Options, path: &Path) -> Result<HeadlessReport,
         if tab.state() != NavState::Idle {
             tracing::warn!("page still loading at the headless deadline; rendering what arrived");
         }
+        settle_timers(&mut tab, &rx);
     }
 
     let url = tab

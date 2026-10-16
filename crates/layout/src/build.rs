@@ -322,6 +322,18 @@ fn collect(
                                 node: child,
                                 style,
                                 image: images.get(&child).cloned(),
+                                control: None,
+                            }));
+                            continue;
+                        }
+                        if let Some(kind) = doc.control_kind(child) {
+                            // Controls are atomic: a button's children show
+                            // as its (text-only) label, not as inline content.
+                            out.push(Child::Inline(InlineItem::Atomic {
+                                node: child,
+                                style,
+                                image: None,
+                                control: Some(crate::controls::Control::from_dom(doc, child, kind)),
                             }));
                             continue;
                         }
