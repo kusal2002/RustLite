@@ -6,7 +6,7 @@ use rustlite_paint::{Color, DisplayItem, DisplayList};
 use rustlite_style::Rgba;
 use rustlite_style::properties::{BorderStyle, Overflow};
 
-use crate::{BlockBox, BlockChildren, InlineItem, LayoutTree, RectF};
+use crate::{BlockBox, BlockChildren, InlineContent, InlineItem, LayoutTree, LineBox, RectF};
 
 fn color(c: Rgba) -> Color {
     // Alpha is clamped to 0..=1 at parse time.
@@ -34,6 +34,10 @@ pub fn canvas_background(tree: &LayoutTree) -> (Color, Option<NodeId>) {
 
 /// Paints `tree` into `out`. Layout is in CSS px; `scale` (the device pixel
 /// ratio) converts to device px, and `scroll_y` (CSS px) shifts content up.
+///
+/// Only content that can be visible in the viewport is emitted: a long page
+/// paints and rasterizes in time proportional to what is on screen, not to
+/// the document's length. Callers repaint when they scroll.
 pub fn paint(tree: &LayoutTree, scroll_y: f32, scale: f32, out: &mut DisplayList) {
     let Some(root) = &tree.root else { return };
     let (bg, propagated) = canvas_background(tree);
@@ -41,6 +45,7 @@ pub fn paint(tree: &LayoutTree, scroll_y: f32, scale: f32, out: &mut DisplayList
         dy: -scroll_y,
         scale,
         propagated,
+        visible: (scroll_y, scroll_y + tree.viewport.1),
     };
     // Canvas background covers the whole viewport.
     let viewport = RectF::new(0.0, 0.0, tree.viewport.0, tree.viewport.1);
@@ -52,9 +57,18 @@ struct Painter {
     dy: f32,
     scale: f32,
     propagated: Option<NodeId>,
+    /// Visible document range in CSS px (top, bottom).
+    visible: (f32, f32),
 }
 
 impl Painter {
+    /// Could anything drawn for `r` show? Text glyphs may overhang their
+    /// fragment (tall ascenders, diacritics), so the test allows one rect
+    /// height of slack on both sides.
+    fn may_show(&self, r: RectF, slack: f32) -> bool {
+        r.bottom() + slack >= self.visible.0 && r.y - slack <= self.visible.1
+    }
+
     /// Converts a CSS-px rect in document space to device px in viewport space.
     fn device(&self, r: RectF, scrolls: bool) -> rustlite_paint::Rect {
         let dy = if scrolls { self.dy } else { 0.0 };
@@ -63,11 +77,21 @@ impl Painter {
     }
 
     fn block(&self, b: &BlockBox, out: &mut DisplayList) {
-        if self.propagated.is_none() || b.node != self.propagated {
+        let clips = !matches!(b.style.overflow_x, Overflow::Visible)
+            || !matches!(b.style.overflow_y, Overflow::Visible);
+        let shows = self.may_show(b.rect, 0.0);
+        // Descendants can overflow a block, so an off-screen block's children
+        // are still visited, unless the block clips them.
+        if !shows && clips {
+            return;
+        }
+        if shows && (self.propagated.is_none() || b.node != self.propagated) {
             out.fill_rect(self.device(b.rect, true), color(b.style.background_color));
         }
-        self.borders(b, out);
-        if let Some(m) = &b.marker {
+        if shows {
+            self.borders(b, out);
+        }
+        if let Some(m) = b.marker.as_ref().filter(|_| shows) {
             let c = color(b.style.color);
             for (dx, run) in &m.runs {
                 out.push(DisplayItem::Text {
@@ -80,8 +104,6 @@ impl Painter {
             }
         }
 
-        let clips = !matches!(b.style.overflow_x, Overflow::Visible)
-            || !matches!(b.style.overflow_y, Overflow::Visible);
         if clips {
             out.push_clip(self.device(b.padding_rect(), true));
         }
@@ -92,30 +114,17 @@ impl Painter {
                 }
             }
             BlockChildren::Inline(inline) => {
-                for f in inline.lines.iter().flat_map(|l| &l.fragments) {
-                    let style = match &inline.items[f.item] {
-                        InlineItem::Text { style, .. } => style,
-                        InlineItem::Atomic { style, image, .. } => {
-                            self.replaced(f.rect, style, image.as_ref(), out);
-                            continue;
-                        }
-                        InlineItem::LineBreak { .. } => continue,
-                    };
-                    let c = color(style.color);
-                    for (dx, run) in &f.runs {
-                        out.push(DisplayItem::Text {
-                            x: (f.rect.x + dx) * self.scale,
-                            y: (f.baseline + self.dy) * self.scale,
-                            scale: self.scale,
-                            color: c,
-                            run: run.clone(),
-                        });
+                for line in &inline.lines {
+                    if !self.may_show(line.rect, line.rect.height) {
+                        continue;
                     }
+                    self.line(inline, line, out);
                 }
             }
             BlockChildren::Empty => {
                 if let Some(r) = &b.replaced
                     && let Some(image) = &r.image
+                    && shows
                 {
                     out.push(DisplayItem::Image {
                         rect: self.device(b.content_rect(), true),
@@ -126,6 +135,30 @@ impl Painter {
         }
         if clips {
             out.pop_clip();
+        }
+    }
+
+    /// Paints one line box's text and atomic inlines.
+    fn line(&self, inline: &InlineContent, line: &LineBox, out: &mut DisplayList) {
+        for f in &line.fragments {
+            let style = match &inline.items[f.item] {
+                InlineItem::Text { style, .. } => style,
+                InlineItem::Atomic { style, image, .. } => {
+                    self.replaced(f.rect, style, image.as_ref(), out);
+                    continue;
+                }
+                InlineItem::LineBreak { .. } => continue,
+            };
+            let c = color(style.color);
+            for (dx, run) in &f.runs {
+                out.push(DisplayItem::Text {
+                    x: (f.rect.x + dx) * self.scale,
+                    y: (f.baseline + self.dy) * self.scale,
+                    scale: self.scale,
+                    color: c,
+                    run: run.clone(),
+                });
+            }
         }
     }
 

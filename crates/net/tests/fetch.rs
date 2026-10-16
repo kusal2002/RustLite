@@ -105,6 +105,7 @@ fn req(base: &str, path: &str, destination: Destination) -> Request {
     Request {
         url: Url::parse(&format!("{base}{path}")).unwrap(),
         destination,
+        cache: rustlite_net::CacheMode::Default,
     }
 }
 

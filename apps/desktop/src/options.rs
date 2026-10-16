@@ -147,6 +147,24 @@ fn parse_size(value: &str) -> Result<Size, OptionsError> {
     Ok(Size::new(parse(w)?, parse(h)?))
 }
 
+/// The navigation input for a command-line argument: an existing local
+/// file (relative paths included) becomes its absolute path, so
+/// `rustlite tests/pages/sample.html` opens the file rather than the host
+/// `tests`. Anything else (URLs, host names) is passed through as typed.
+/// Only the command line does this; the address bar never probes the disk.
+pub fn command_line_input(arg: &std::path::Path) -> String {
+    if arg.is_file()
+        && let Ok(absolute) = std::fs::canonicalize(arg)
+    {
+        let text = absolute.to_string_lossy().into_owned();
+        // Windows canonical paths carry a verbatim prefix (`\\?\C:\...`).
+        return text
+            .strip_prefix(r"\\?\")
+            .map_or(text.clone(), str::to_owned);
+    }
+    arg.to_string_lossy().into_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +222,30 @@ mod tests {
             parse(&["--bogus"]),
             Err(OptionsError::Unknown("--bogus".into()))
         );
+    }
+
+    #[test]
+    fn command_line_files_become_absolute_paths() {
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let file = manifest.join("Cargo.toml");
+        let relative = pathdiff_from_cwd(&file);
+        let input = command_line_input(&relative);
+        assert!(std::path::Path::new(&input).is_absolute(), "{input}");
+        assert!(!input.starts_with(r"\\?\"));
+        assert_eq!(
+            command_line_input(std::path::Path::new("example.com")),
+            "example.com"
+        );
+        assert_eq!(
+            command_line_input(std::path::Path::new("https://a.test/x")),
+            "https://a.test/x"
+        );
+    }
+
+    /// `path` relative to the current directory when possible.
+    fn pathdiff_from_cwd(path: &std::path::Path) -> std::path::PathBuf {
+        let cwd = std::env::current_dir().unwrap();
+        path.strip_prefix(&cwd)
+            .map_or_else(|_| path.to_path_buf(), std::path::Path::to_path_buf)
     }
 }

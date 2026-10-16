@@ -122,10 +122,13 @@ impl ComputedStyle {
 
 /// Inputs to computation that are the same for every element of a document.
 #[derive(Debug, Clone, Copy)]
-pub struct ComputeContext {
+pub struct ComputeContext<'a> {
     pub root_font_size: f32,
     pub viewport_width: f32,
     pub viewport_height: f32,
+    /// Set when a viewport-relative unit was resolved, so callers know
+    /// whether a viewport resize changes computed values.
+    pub viewport_used: &'a std::cell::Cell<bool>,
 }
 
 /// The winning declared value for each longhand (indexed by `Longhand as usize`).
@@ -150,7 +153,13 @@ fn resolve(property: Longhand, declared: Option<&Value>) -> Resolved<'_> {
     }
 }
 
-fn length_px(length: Length, font_size: f32, ctx: &ComputeContext) -> f32 {
+fn length_px(length: Length, font_size: f32, ctx: &ComputeContext<'_>) -> f32 {
+    if matches!(
+        length.unit,
+        LengthUnit::Vw | LengthUnit::Vh | LengthUnit::Vmin | LengthUnit::Vmax
+    ) {
+        ctx.viewport_used.set(true);
+    }
     let base = match length.unit {
         LengthUnit::Px => 1.0,
         LengthUnit::Em => font_size,

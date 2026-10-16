@@ -48,9 +48,20 @@ I/O.
 render as plain text in a `<pre>`; `image/*` renders the image; anything else
 shows an error page (no downloads yet).
 
+## Cache
+
+`Loader` keeps an in-memory cache of stylesheet and image responses, shared
+by all tabs: only `200` responses with `Cache-Control: max-age` > 0 and
+without `no-store`, `no-cache` or `private`; never documents; 32 MiB of
+bodies (`FetchConfig::cache_bytes`) with least-recently-used eviction, and no
+single entry over a quarter of the budget. Entries expire at their max-age.
+A reload (`Tab::reload`) fetches subresources again and refreshes the cache.
+There is no revalidation (`ETag`, `Last-Modified`), no heuristic freshness,
+no `Vary` handling and nothing is written to disk.
+
 ## Not implemented yet
 
-HTTP cache, cookies, `Referer`, CORS and other origin checks for subresources,
+HTTP revalidation and disk cache, cookies, `Referer`, CORS and other origin checks for subresources,
 CSP, `data:` URLs, proxies, HTTP/2 (ureq speaks HTTP/1.1), redirects for
 `POST` (no forms yet), download handling, `@import`, `@charset`, and a
 persistent or per-site connection pool policy.

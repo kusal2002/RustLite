@@ -38,6 +38,14 @@ a local HTTP server on `127.0.0.1` inside the test process; CI needs no
 external network. Certificate validation was checked manually against
 badssl.com (see NET-001); an offline TLS test with a test CA is a gap.
 
+## Benchmarks
+
+`cargo run --release -p rustlite-bench` prints per-stage medians;
+`--compare benchmarks/baseline-windows-x64.tsv` exits non-zero when a stage
+is more than 1.5× its baseline (stages under 0.5 ms are ignored as noise).
+CI runs the harness only as a smoke test. See
+[performance.md](performance.md#pipeline-benchmarks-phase-8).
+
 ## Windowed smoke test
 
 ```bash

@@ -38,6 +38,9 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | SHELL-002 | Address bar editing, link clicks, back/forward/reload/stop, loading bar | Tested | `address_bar`, `commands`, `toolbar` tests; manual windowed use |
 | SHELL-003 | Multiple tabs (tab strip, per-tab load ids on one shared loader, one shared font context), links in new tabs, clipboard in text fields | Tested | `tabstrip`, `commands`, `address_bar` tests; shared-loader routing test; scripted windowed run |
 | FIND-001 | Find in page: case-insensitive matches across inline elements and soft wraps, highlights, next/previous, scroll to match | Tested | layout `find_text` test; `findbar` tests; scripted windowed run |
+| PERF-001 | Benchmark harness, baseline and regression compare | Tested | `rustlite-bench` unit tests; baseline file; CI smoke run |
+| PERF-002 | Shaping face cache, word shaping cache, attribute bucket, ancestor key filter, viewport-culled paint | Tested | style golden fixtures still 12/12; `ancestor_filter_keeps_every_true_match`; `paint_emits_only_what_the_viewport_can_show` |
+| PERF-003 | Memory report per subsystem; bounded HTTP subresource cache; restyle on resize only with viewport units | Tested | `memory_report_covers_each_subsystem`; cache unit tests and `cacheable_subresources_are_reused_until_reload`; `resize_restyles_only_viewport_dependent_documents` |
 | CSS-002 | `font` shorthand, `min-/max-width/height`, `light-dark()` | Verified on reference browser (fixture set) | `font-shorthand` style and `min-max-sizes` layout fixtures match Chromium 152 |
 | JS-001 | JS runtime | Deferred (Phase 9) | — |
 
@@ -45,7 +48,7 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 | Platform | Build | Tests | Window | Notes |
 |---|---|---|---|---|
-| Windows 11 x64 (MSVC) | ✅ | ✅ 239/239 | ✅ | Ryzen 5 5600G, Radeon iGPU |
+| Windows 11 x64 (MSVC) | ✅ | ✅ 252/252 | ✅ | Ryzen 5 5600G, Radeon iGPU |
 | Linux x64 | ✅ CI | ✅ CI (run 38864693788) | Unverified | No display in CI; text layout goldens skip (no Times New Roman) |
 | macOS | ✅ CI | ✅ CI (run 38864693788) | Unverified | Layout text goldens pin Times New Roman and skip if its metrics differ from the reference machine |
 
@@ -195,3 +198,32 @@ Tested · Verified on reference browser · Blocked · Deferred.
   set (one tab: ~24–28 MB); binary 4.6 MiB.
 - **Next:** Phase 8 (benchmarks, incremental invalidation, HTTP cache) or a
   history list; process isolation design before JavaScript.
+
+### 2026-10-16 — Phase 8: benchmarks, memory reporting, bounded caches
+
+- **What:** `rustlite-bench` (per-stage timings on deterministic workloads,
+  baseline save/compare, CI smoke run); shaping faces parsed once per font
+  and a bounded word shaping cache; attribute-name rule bucket and an
+  ancestor key filter in the stylist; viewport-culled paint; restyle on
+  resize only when viewport units were used; `Page::memory_report()` logged
+  by the app; a 32 MiB LRU HTTP cache for subresources honoring
+  `Cache-Control: max-age`/`no-store`/`no-cache`/`private`, bypassed on reload.
+- **Results:** article-50 layout 740 → 19.7 ms cold / 9.7 ms warm; style
+  12.3 → 5.1 ms; article-400 paint + raster 39 → 0.7 ms. See
+  [performance.md](performance.md#phase-8-results-reference-machine-medians-ms).
+- **Bug found:** command-line relative paths (`rustlite tests/pages/sample.html`)
+  were parsed as host names, so CI's headless render had shown an error page
+  since Phase 6. The command line now resolves existing files to absolute
+  paths (the address bar is unchanged).
+- **Bug caught by a new test:** the first ancestor-filter version treated
+  compounds left of a sibling combinator as ancestors (`.a + .b .c`); fixed
+  before landing.
+- **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 252 passed
+  · release build ✅ · benchmark baseline saved · windowed memory run.
+- **Measurements:** 28.8 MB working set with the sample page, 29.3 MB with
+  three tabs; binary 4.7 MiB.
+- **Not done:** dirty-bit incremental restyle/relayout and dirty-rect
+  repaint (whole-document work remains, but it is now 10–100× cheaper);
+  HTTP revalidation and heuristic freshness.
+- **Next:** Phase 9 prerequisites (process-isolation ADR, same-origin policy
+  for subresources, parser fuzzing) before a JavaScript engine.

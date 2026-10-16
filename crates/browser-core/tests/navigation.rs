@@ -60,7 +60,11 @@ fn handle(mut stream: TcpStream) {
             "Content-Type: text/css\r\n".into(),
             b"p { color: rgb(1, 2, 3) }".to_vec(),
         ),
-        "/img.png" => ("200 OK", "Content-Type: image/png\r\n".into(), png_4x4()),
+        "/img.png" => (
+            "200 OK",
+            "Content-Type: image/png\r\nCache-Control: public, max-age=60\r\n".into(),
+            png_4x4(),
+        ),
         "/other" => (
             "200 OK",
             "Content-Type: text/html\r\n".into(),
@@ -287,4 +291,30 @@ fn tabs_sharing_a_loader_get_their_own_results() {
     }
     assert_eq!(a.page().title().as_deref(), Some("Fast"));
     assert_eq!(b.page().title().as_deref(), Some("Page"));
+}
+
+#[test]
+fn cacheable_subresources_are_reused_until_reload() {
+    let base = server();
+    let (mut t, rx) = tab();
+    let loader = t.loader().cloned().unwrap();
+    t.navigate(&format!("{base}/page")).unwrap();
+    pump(&mut t, &rx, 0);
+    let first = loader.cache_stats();
+    assert_eq!(
+        (first.entries, first.hits),
+        (1, 0),
+        "only the max-age image is stored"
+    );
+
+    t.navigate(&format!("{base}/page")).unwrap();
+    pump(&mut t, &rx, 0);
+    assert_eq!(loader.cache_stats().hits, 1, "image served from cache");
+    let img = element(&mut t, "img");
+    let (_, tree) = t.page_mut().layout().unwrap();
+    assert_eq!(rustlite_layout::element_rects(tree)[&img].width, 4.0);
+
+    assert!(t.reload());
+    pump(&mut t, &rx, 0);
+    assert_eq!(loader.cache_stats().hits, 1, "reload bypasses the cache");
 }

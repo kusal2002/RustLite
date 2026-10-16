@@ -21,7 +21,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use rustlite_dom::NodeId;
-use rustlite_net::{CancelToken, Destination, LoadResult, Loader, NetError, Request, Url};
+use rustlite_net::{
+    CacheMode, CancelToken, Destination, LoadResult, Loader, NetError, Request, Url,
+};
 
 use crate::Page;
 
@@ -84,6 +86,8 @@ pub struct Tab {
     subresource_cancel: CancelToken,
     history: Vec<Url>,
     index: Option<usize>,
+    /// The pending navigation is a reload (subresources skip the cache).
+    reloading: bool,
 }
 
 /// The tab id space a load id belongs to (see [`Tab::with_id_space`]).
@@ -195,6 +199,7 @@ impl Tab {
             subresource_cancel: CancelToken::new(),
             history: Vec::new(),
             index: None,
+            reloading: false,
         }
     }
 
@@ -268,8 +273,11 @@ impl Tab {
         self.traverse(1)
     }
 
+    /// Reloads the current entry; its subresources bypass the HTTP cache.
     pub fn reload(&mut self) -> bool {
-        self.traverse(0)
+        let started = self.traverse(0);
+        self.reloading = started;
+        started
     }
 
     fn traverse(&mut self, delta: isize) -> bool {
@@ -298,6 +306,7 @@ impl Tab {
         mode: HistoryMode,
         initiator: Initiator,
     ) -> Result<(), NavigationError> {
+        self.reloading = false;
         match url.scheme() {
             "http" | "https" => {
                 self.stop();
@@ -310,6 +319,7 @@ impl Tab {
                             Request {
                                 url: url.clone(),
                                 destination: Destination::Document,
+                                cache: CacheMode::Default,
                             },
                             cancel.clone(),
                         )
@@ -414,9 +424,18 @@ impl Tab {
         let Some(loader) = self.loader.clone() else {
             return;
         };
-        for (destination, url, nodes) in self.page.subresource_requests() {
+        let requests = self.page.subresource_requests();
+        for (destination, url, nodes) in requests {
             let id = self.next_id();
-            let request = Request { url, destination };
+            let request = Request {
+                url,
+                destination,
+                cache: if self.reloading {
+                    CacheMode::Reload
+                } else {
+                    CacheMode::Default
+                },
+            };
             match loader.load(id, request, self.subresource_cancel.clone()) {
                 Ok(()) => {
                     self.subresources

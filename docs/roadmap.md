@@ -13,7 +13,7 @@ acceptance criteria pass; see [progress.md](progress.md) for live status.
 | 5 | Display lists for text/images, clipping, GPU presentation | Renders a simple HTML page without another engine | **Done on CPU** (2026-10-16): text, boxes, images, list markers, border styles, clipping, device scale. GPU presentation deferred (ADR-0001) |
 | 6 | HTTP(S), URL resolution, redirects, errors | Loads local test server + selected pages | **Done** (2026-10-16): local-server tests; example.com; bad certificates refused |
 | 7 | Address bar, navigation, history, loading state, tabs | Navigate and recover from failures | **Done** (2026-10-16): address bar, links, history, loading state, error recovery, tabs, clipboard, find in page |
-| 8 | Benchmarks, memory reporting, bounded caches, incremental invalidation | Measured, regression-tested | Planned (frame-time stats exist) |
+| 8 | Benchmarks, memory reporting, bounded caches, incremental invalidation | Measured, regression-tested | **Done** (2026-10-16): harness + baseline, memory report, bounded glyph/shape/HTTP caches, narrower invalidation; dirty-bit incremental restyle/relayout deferred |
 | 9 | JS runtime (Boa evaluation), first DOM APIs | Simple interactive pages | Planned |
 | 10 | Advanced CSS, Web APIs, isolation, security | Every claim tested + documented | Planned |
 
@@ -22,9 +22,9 @@ acceptance criteria pass; see [progress.md](progress.md) for live status.
 **Phase 7 follow-ups:** a history list / back-button menu, text selection
 and copy in page content, tab drag-reordering, session restore.
 
-**Phase 8 performance:** criterion benchmarks for parse/style/layout/raster,
-memory reporting per subsystem, an HTTP cache with a byte budget, incremental
-restyle/relayout instead of whole-document invalidation, dirty-rect repaint.
+**Phase 8 follow-ups:** dirty-bit incremental restyle/relayout, dirty-rect
+repaint, HTTP revalidation (`ETag`/`Last-Modified`), faster HTML parsing
+(~23 µs per element on the large benchmark).
 
 **Before Phase 9 (JavaScript):** a process-isolation ADR (sandboxed renderer
 per site), same-origin policy for subresources, parser fuzzing in CI.

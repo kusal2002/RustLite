@@ -298,10 +298,44 @@ impl BrowserWindow {
         if slot.tab.on_load_result(result) {
             let text = tab_url_text(&slot.tab);
             slot.address.show_url(&text);
+            if slot.tab.state() == NavState::Idle && slot.tab.pending_subresources() == 0 {
+                self.log_page_memory(index);
+                self.log_cache();
+            }
             if index == self.active {
                 self.sync_chrome();
             }
             self.window.request_redraw();
+        }
+    }
+
+    /// Logs every tab's memory and the shared caches (on exit).
+    pub fn log_all_memory(&mut self) {
+        for index in 0..self.tabs.len() {
+            self.log_page_memory(index);
+        }
+        self.log_cache();
+    }
+
+    /// Logs a tab's memory (the active tab also holds the font caches).
+    fn log_page_memory(&mut self, index: usize) {
+        let page = self.tabs[index].tab.page_mut();
+        // Lay out and paint first so the report covers the whole pipeline.
+        page.display_list();
+        tracing::info!(tab = index, memory = %page.memory_report(), "page memory");
+    }
+
+    fn log_cache(&self) {
+        if let Some(loader) = &self.loader {
+            let c = loader.cache_stats();
+            tracing::info!(
+                entries = c.entries,
+                kib = c.bytes / 1024,
+                hits = c.hits,
+                misses = c.misses,
+                evictions = c.evictions,
+                "http cache"
+            );
         }
     }
 

@@ -10,12 +10,14 @@
 //! - Bodies are size-limited per destination; requests have timeouts and can
 //!   be cancelled between chunks.
 
+mod cache;
 mod encoding;
 mod loader;
 
 use std::io::Read;
 use std::time::Duration;
 
+pub use cache::{CacheStats, DEFAULT_CACHE_BYTES, HttpCache, freshness};
 pub use encoding::{DecodedText, decode_html, decode_text};
 pub use loader::{CancelToken, LoadResult, Loader, LoaderError};
 pub use url::Url;
@@ -53,6 +55,17 @@ impl Destination {
 pub struct Request {
     pub url: Url,
     pub destination: Destination,
+    pub cache: CacheMode,
+}
+
+/// Whether a request may be answered from the HTTP cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CacheMode {
+    /// Use a fresh cached response if there is one.
+    #[default]
+    Default,
+    /// Always fetch (the user asked to reload); the result is still stored.
+    Reload,
 }
 
 /// A completed HTTP response (any status; 404 pages have bodies too).
@@ -68,6 +81,9 @@ pub struct Response {
     pub body: Vec<u8>,
     /// URLs redirected through, in order.
     pub redirects: Vec<Url>,
+    /// How long the response may be reused, from `Cache-Control`
+    /// (`None`: not cacheable). See [`freshness`].
+    pub cache_lifetime: Option<Duration>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -156,6 +172,8 @@ pub struct FetchConfig {
     pub timeout: Duration,
     pub connect_timeout: Duration,
     pub user_agent: String,
+    /// Byte budget of the in-memory subresource cache (0 disables it).
+    pub cache_bytes: usize,
 }
 
 impl Default for FetchConfig {
@@ -167,6 +185,7 @@ impl Default for FetchConfig {
                 "RustLite/{} (+https://github.com/kusal2002/RustLite)",
                 env!("CARGO_PKG_VERSION")
             ),
+            cache_bytes: DEFAULT_CACHE_BYTES,
         }
     }
 }
@@ -258,6 +277,12 @@ impl Fetcher {
                 .and_then(|v| v.to_str().ok())
                 .map(parse_content_type)
                 .unwrap_or((None, None));
+            let cache_lifetime = freshness(
+                response
+                    .headers()
+                    .get("cache-control")
+                    .and_then(|v| v.to_str().ok()),
+            );
             let limit = request.destination.max_body_bytes();
             let body = read_body(response.body_mut(), limit, cancel)?;
             return Ok(Response {
@@ -267,6 +292,7 @@ impl Fetcher {
                 charset,
                 body,
                 redirects,
+                cache_lifetime,
             });
         }
     }
@@ -334,6 +360,7 @@ mod tests {
             let req = Request {
                 url: Url::parse(u).unwrap(),
                 destination: Destination::Document,
+                cache: CacheMode::Default,
             };
             assert!(
                 matches!(
@@ -353,6 +380,7 @@ mod tests {
         let req = Request {
             url: Url::parse("http://127.0.0.1:9/").unwrap(),
             destination: Destination::Document,
+            cache: CacheMode::Default,
         };
         assert_eq!(f.fetch(&req, &cancel), Err(NetError::Cancelled));
     }

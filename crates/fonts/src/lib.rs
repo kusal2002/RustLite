@@ -64,10 +64,33 @@ pub struct ShapedSegment {
     pub advance: f32,
 }
 
+type ShaperFace<'a> = rustybuzz::Face<'a>;
+
+self_cell::self_cell!(
+    /// Font bytes plus the rustybuzz face parsed from them. Parsing the
+    /// shaping tables costs ~80 µs, ~25x shaping a word, so it is done once
+    /// per face instead of once per shaped string.
+    struct Shaper {
+        owner: Rc<[u8]>,
+        #[covariant]
+        dependent: ShaperFace,
+    }
+);
+
+impl std::fmt::Debug for Shaper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Shaper")
+            .field("bytes", &self.borrow_owner().len())
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug)]
 struct Face {
     data: Rc<[u8]>,
     index: u32,
+    /// `None` if rustybuzz cannot parse the face (it then shapes to nothing).
+    shaper: Option<Shaper>,
     units_per_em: f32,
     ascent: f32,
     descent: f32,
@@ -132,7 +155,19 @@ pub struct FontContext {
     query_cache: HashMap<(String, u16, bool), Option<FontId>>,
     fallback_cache: HashMap<(char, u16, bool), Option<FontId>>,
     glyph_cache: HashMap<(FontId, u16, u32), Option<Rc<GlyphBitmap>>>,
+    /// Shaped short strings (words), per (primary font, weight, italic, size bits).
+    shape_cache: HashMap<ShapeKey, HashMap<Box<str>, Rc<[ShapedSegment]>>>,
+    shape_cache_len: usize,
 }
+
+/// Shaping cache key: primary font, weight, italic, size (`f32` bits).
+type ShapeKey = (FontId, u16, bool, u32);
+
+/// Strings up to this many bytes are cached by [`FontContext::shape`]; longer
+/// ones (UI text, measured prefixes) rarely repeat.
+const SHAPE_CACHE_MAX_BYTES: usize = 48;
+/// Entry cap for the shaping cache (~a few MB at most); cleared when full.
+const SHAPE_CACHE_LIMIT: usize = 16_384;
 
 impl Default for FontContext {
     fn default() -> Self {
@@ -150,7 +185,67 @@ impl FontContext {
             query_cache: HashMap::new(),
             fallback_cache: HashMap::new(),
             glyph_cache: HashMap::new(),
+            shape_cache: HashMap::new(),
+            shape_cache_len: 0,
         }
+    }
+
+    /// Empties the word shaping cache (benchmarks measure cold layout with it).
+    pub fn clear_shape_cache(&mut self) {
+        self.shape_cache.clear();
+        self.shape_cache_len = 0;
+    }
+
+    /// Entries in the word shaping cache (for memory reporting).
+    pub fn shape_cache_len(&self) -> usize {
+        self.shape_cache_len
+    }
+
+    /// Approximate heap bytes of the word shaping cache.
+    pub fn shape_cache_bytes(&self) -> usize {
+        self.shape_cache
+            .values()
+            .flat_map(|m| m.iter())
+            .map(|(word, segments)| {
+                word.len()
+                    + std::mem::size_of::<Rc<[ShapedSegment]>>()
+                    + segments
+                        .iter()
+                        .map(|s| {
+                            std::mem::size_of::<ShapedSegment>()
+                                + s.glyphs.capacity() * std::mem::size_of::<ShapedGlyph>()
+                        })
+                        .sum::<usize>()
+            })
+            .sum()
+    }
+
+    /// Entries in the glyph bitmap cache (for memory reporting).
+    pub fn glyph_cache_len(&self) -> usize {
+        self.glyph_cache.len()
+    }
+
+    /// Approximate heap bytes of cached glyph bitmaps.
+    pub fn glyph_cache_bytes(&self) -> usize {
+        self.glyph_cache
+            .values()
+            .map(|g| {
+                std::mem::size_of::<(FontId, u16, u32)>()
+                    + g.as_ref().map_or(0, |b| {
+                        std::mem::size_of::<GlyphBitmap>() + b.coverage.capacity()
+                    })
+            })
+            .sum()
+    }
+
+    /// Faces loaded for shaping and rasterizing, and their font file bytes.
+    /// Font data from the OS may be memory-mapped and shared, so the bytes
+    /// are an upper bound on what this process adds.
+    pub fn loaded_faces(&self) -> (usize, usize) {
+        (
+            self.faces.len(),
+            self.faces.iter().map(|f| f.data.len()).sum(),
+        )
     }
 
     /// A context with the operating system's installed fonts.
@@ -222,6 +317,10 @@ impl FontContext {
             ascent: f32::from(parsed.ascender()),
             descent: -f32::from(parsed.descender()),
             line_gap: f32::from(parsed.line_gap()),
+            shaper: Shaper::try_new(data.clone(), |d| {
+                rustybuzz::Face::from_slice(d, index).ok_or(())
+            })
+            .ok(),
             data: data.clone(),
             index,
         };
@@ -321,7 +420,41 @@ impl FontContext {
 
     /// Shapes `text` with `primary`, switching to fallback faces for
     /// characters `primary` lacks. Returns one segment per face change.
+    /// Shapes `text` starting from `primary`, splitting it into segments by
+    /// the face that covers each character. Short strings are cached.
     pub fn shape(
+        &mut self,
+        primary: FontId,
+        weight: u16,
+        italic: bool,
+        size: f32,
+        text: &str,
+    ) -> Rc<[ShapedSegment]> {
+        if text.len() > SHAPE_CACHE_MAX_BYTES {
+            return self
+                .shape_uncached(primary, weight, italic, size, text)
+                .into();
+        }
+        let key = (primary, weight, italic, size.to_bits());
+        if let Some(hit) = self.shape_cache.get(&key).and_then(|m| m.get(text)) {
+            return hit.clone();
+        }
+        let shaped: Rc<[ShapedSegment]> = self
+            .shape_uncached(primary, weight, italic, size, text)
+            .into();
+        if self.shape_cache_len >= SHAPE_CACHE_LIMIT {
+            self.shape_cache.clear();
+            self.shape_cache_len = 0;
+        }
+        self.shape_cache
+            .entry(key)
+            .or_default()
+            .insert(text.into(), shaped.clone());
+        self.shape_cache_len += 1;
+        shaped
+    }
+
+    fn shape_uncached(
         &mut self,
         primary: FontId,
         weight: u16,
@@ -333,14 +466,15 @@ impl FontContext {
         // with the preceding base character.
         let mut runs: Vec<(usize, usize, FontId)> = Vec::new();
         {
-            let data = self.faces[primary.0 as usize].data.clone();
-            let index = self.faces[primary.0 as usize].index;
-            let parsed = ttf_parser::Face::parse(&data, index).ok();
             for (i, c) in text.char_indices() {
                 let continues_cluster = runs.last().is_some() && is_cluster_continuation(c);
                 let font = if continues_cluster {
                     runs.last().map(|r| r.2).unwrap_or(primary)
-                } else if parsed.as_ref().is_none_or(|f| Self::covers(f, c)) {
+                } else if self.faces[primary.0 as usize]
+                    .shaper
+                    .as_ref()
+                    .is_none_or(|s| Self::covers(s.borrow_dependent(), c))
+                {
                     primary
                 } else {
                     self.fallback_for(c, weight, italic).unwrap_or(primary)
@@ -361,11 +495,11 @@ impl FontContext {
         let scale = size / f.units_per_em;
         let mut glyphs = Vec::new();
         let mut advance = 0.0;
-        if let Some(face) = rustybuzz::Face::from_slice(&f.data, f.index) {
+        if let Some(face) = f.shaper.as_ref().map(Shaper::borrow_dependent) {
             let mut buffer = rustybuzz::UnicodeBuffer::new();
             buffer.push_str(text);
             buffer.guess_segment_properties();
-            let shaped = rustybuzz::shape(&face, &[], buffer);
+            let shaped = rustybuzz::shape(face, &[], buffer);
             for (info, pos) in shaped.glyph_infos().iter().zip(shaped.glyph_positions()) {
                 let g = ShapedGlyph {
                     // Glyph IDs are 16-bit in OpenType.

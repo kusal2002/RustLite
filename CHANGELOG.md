@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added — 2026-10-16 (Phase 8)
+- `rustlite-bench`: per-stage pipeline benchmarks with baseline save and
+  compare; reference baseline in `benchmarks/`; CI smoke run.
+- `Page::memory_report()` (DOM, styles, layout, images, display list, glyph
+  and shaping caches), logged by the desktop app and headless renders.
+- In-memory HTTP cache for stylesheets and images in `Loader` (32 MiB LRU,
+  `Cache-Control: max-age`, never for documents), bypassed by reload.
+- `FontContext` word shaping cache (bounded).
+
+### Changed
+- Shaping no longer re-parses the font for every word (rustybuzz faces are
+  kept per loaded font via `self_cell`): layout ~37× faster on a 3,500-element page.
+- Stylist buckets attribute selectors and rejects rules with an ancestor key
+  filter: style ~2.4× faster on the same page.
+- Paint emits only what the viewport can show; scroll repaint and raster
+  cost no longer grow with page length.
+- A resize restyles only documents that use viewport units.
+
+### Fixed
+- Relative file paths on the command line opened `https://<first segment>/…`
+  (an error page) instead of the file; CI's headless frame was affected.
+
 ### Added — 2026-10-16 (Phase 7)
 - Tabs: tab strip with close and new-tab buttons, keyboard switching,
   middle-click close, links in background tabs (Ctrl/Cmd+click,

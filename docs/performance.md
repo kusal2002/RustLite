@@ -17,9 +17,9 @@ Performance targets are **hypotheses** until measured on a defined setup.
 
 | Target | Status |
 |---|---|
-| Idle app memory < 50 MB | Baseline met for blank page (16.8 MB WS); revalidate once fonts/DOM land |
-| Simple static page < 100 MB | Not measurable yet (no HTML) |
-| 60 FPS scrolling | Not measurable yet (no scrolling) |
+| Idle app memory < 50 MB | Met: 16.8 MB working set blank; 28.8 MB with the sample page |
+| Simple static page < 100 MB | Met: 29.3 MB working set with three tabs (2026-10-16) |
+| 60 FPS scrolling | Met on the reference machine: scroll repaint + raster is ~1 ms regardless of page length (paint culls to the viewport) |
 
 ## Benchmark log
 
@@ -43,10 +43,104 @@ Performance targets are **hypotheses** until measured on a defined setup.
 | 2026-10-16 | Release binary size with networking (ureq, rustls/ring, platform verifier, url, encoding_rs) | bytes | 4,814,336 (4.6 MiB) | file size |
 | 2026-10-16 | Window showing https://example.com/, 5 s after launch | working set / private bytes / threads | 28.0 MB / 12.0 MB / 15 | PowerShell `Get-Process` |
 | 2026-10-16 | Three tabs (two with tests/pages/sample.html, one blank), find bar used | working set | 29.1 MB | PowerShell `Get-Process`; tabs share one font context |
+| 2026-10-16 | Phase 8 build: sample page, then three tabs | working set / private bytes | 28.8 / 16.0 MB → 29.3 / 16.5 MB | PowerShell `Get-Process`, scripted run |
+| 2026-10-16 | Release binary size (Phase 8) | bytes | 4,908,032 (4.7 MiB) | file size |
 | 2026-10-16 | Style computation, same page (300,005 elements, 160 rules incl. UA), 800×600 | style time (3 runs) | 71.4 / 88.1 / 71.7 ms; 299,987 elements served by style sharing | `rustlite --dump-style` `style_ms` log field, release build. Best case for sharing: the page repeats one structure 20,000 times |
 
-Single runs; no variance analysis yet. Criterion benchmarks are not set up yet; parse timings come from the
-`parse_ms` log field. A repeatable benchmark harness is a Phase 8 item.
+Rows above are single runs. From Phase 8 on, pipeline timings come from the
+benchmark harness below (medians of repeated runs).
+
+## Pipeline benchmarks (Phase 8)
+
+`benchmarks/` (`rustlite-bench`, no external harness) times each stage on
+deterministic workloads: `sample` (tests/pages/sample.html), `article-50`
+and `article-400` (generated pages: 50/400 sections of prose with inline
+markup and links, lists and box grids, a 3,000-word vocabulary with a
+skewed frequency, and 100/400 class, descendant and attribute rules).
+Stages: `parse` (HTML), `cascade` (stylist build), `style`, `layout-cold`
+(word shaping cache emptied first), `layout` (warm), `paint`, `raster`
+(1280×800). Each stage runs warm-up iterations, then N timed runs; the
+median is reported.
+
+```bash
+cargo run --release -p rustlite-bench                      # full table
+cargo run --release -p rustlite-bench -- --save FILE       # write a baseline
+cargo run --release -p rustlite-bench -- --compare FILE    # fail on >1.5x
+```
+
+`benchmarks/baseline-windows-x64.tsv` is the reference-machine baseline.
+CI only smoke-runs the harness (`--quick --iterations 3`): shared runners
+are too noisy to gate on, so regressions are checked with `--compare` on
+the reference machine before a phase is closed.
+
+### Phase 8 results (reference machine, medians, ms)
+
+| Workload | Stage | Before Phase 8 | After | Change |
+|---|---|---|---|---|
+| article-50 (3,476 elements) | layout (cold) | 740.1 | 19.7 | shaping faces cached; word shaping cache |
+| article-50 | layout (warm relayout) | 740.1 | 9.7 | |
+| article-50 | style | 12.3 | 5.1 | attribute-name rule bucket; ancestor key filter |
+| article-400 (27,626 elements) | layout (cold) | 6,147 | 112 | |
+| article-400 | style | 390.7 | 113 | |
+| article-400 | paint | 13.1 | 0.10 | paint culls to the viewport |
+| article-400 | raster | 26.1 | 0.62 | 128,441 → 364 display items |
+| sample | layout (cold) | 1.89 | 0.51 | |
+
+"Before" for layout was measured with the 20-word vocabulary the harness
+first used; the cold number after the change uses the 3,000-word one, so
+the comparison understates the gain. Findings and causes:
+
+- **Shaping:** `rustybuzz::Face::from_slice` took 83 µs per call (parsing
+  GSUB/GPOS) versus 3.5 µs to shape a word, and was called per word. Faces
+  are now parsed once per loaded font (`self_cell`), and shaped words are
+  cached (≤48-byte strings, 16,384 entries, cleared when full).
+- **Style:** attribute selectors had no bucket, so every `[attr]` rule was
+  tried on every element; descendant selectors walked ancestors for every
+  candidate rule. Rules are now bucketed by attribute name, and each rule
+  stores hashed id/class/tag keys its ancestors must have; an element's
+  ancestor keys are collected once and reject most candidates without a
+  tree walk (the idea behind browsers' ancestor Bloom filters).
+- **Paint/raster:** the whole document was painted and every item was
+  clipped during raster. Paint now skips lines and box decorations outside
+  the viewport (with slack for overhanging glyphs); blocks that clip their
+  overflow are skipped entirely when off-screen.
+- **Remaining hot spots:** HTML parse (~23 µs per element on article-400),
+  warm layout (~0.8 µs per word: inline item collection and per-item font
+  selection, which formats a cache key string), and style at 400 rules.
+
+## Memory reporting
+
+`Page::memory_report()` estimates heap bytes per subsystem (DOM arena and
+strings, distinct computed styles, layout boxes/fragments/glyph arrays,
+decoded images, display list, glyph and shaping caches). Estimates count
+payloads and container slots, not allocator overhead. The desktop app logs
+it when a network page finishes loading and for every tab on exit; headless
+renders log it after the frame. Example (`tests/pages/sample.html`):
+dom 15 KiB (95 nodes) · styles 7 KiB (31 distinct) · layout 39 KiB ·
+images 3 KiB · display list 12 KiB · glyph cache 26 KiB · shape cache
+50 KiB. Font files and the HTTP cache are reported separately.
+
+## Bounded caches
+
+| Cache | Bound | Policy |
+|---|---|---|
+| Glyph bitmaps (`FontContext`) | entry cap | cleared when full |
+| Shaped words (`FontContext`) | 16,384 entries, strings ≤48 bytes | cleared when full |
+| HTTP subresources (`Loader`) | 32 MiB of bodies; entries ≤ ¼ budget | LRU eviction; `max-age` expiry |
+| Style sharing | one document | dropped with the styles |
+
+## Invalidation
+
+| Change | Restyle | Relayout | Repaint |
+|---|---|---|---|
+| Scroll | no | no | yes (viewport-culled) |
+| Viewport size or device scale | only if a computed value used `vw`/`vh`/`vmin`/`vmax` | yes | yes |
+| Image arrives | no | yes | yes |
+| Stylesheet arrives | yes | yes | yes |
+| Font context handed to another tab | no | only if the page had a different context | yes |
+
+Not yet incremental: restyle and relayout are whole-document when they
+happen (no dirty bits), and repaint rasterizes the whole window.
 
 ## Principles in effect
 

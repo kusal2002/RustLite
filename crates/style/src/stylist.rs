@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use rustlite_css::{Complex, SimpleSelector, Specificity, Stylesheet};
+use rustlite_css::{Combinator, Complex, SimpleSelector, Specificity, Stylesheet};
 use rustlite_dom::{Document, NodeData, NodeId, QuirksMode};
 
 use crate::computed::{ComputeContext, ComputedStyle, DeclaredValues, compute};
@@ -21,9 +21,29 @@ pub enum Origin {
 #[derive(Debug)]
 struct Rule {
     selector: Complex,
+    /// Hashed id/class/tag keys that some ancestor of the subject must have
+    /// (sorted). A rule whose keys are not all among an element's ancestors'
+    /// keys cannot match it, which rejects most descendant selectors without
+    /// walking the tree (the idea behind browsers' ancestor Bloom filters).
+    ancestor_keys: Box<[u64]>,
     specificity: Specificity,
     origin: Origin,
     declarations: Rc<[PropertyDeclaration]>,
+}
+
+const KEY_ID: u8 = 0;
+const KEY_CLASS: u8 = 1;
+const KEY_TAG: u8 = 2;
+
+/// FNV-1a over a kind byte and a name: cheap, and collisions only cost a
+/// full selector match.
+fn key_hash(kind: u8, name: &str) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in std::iter::once(kind).chain(name.bytes()) {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0100_0000_01b3);
+    }
+    h
 }
 
 /// All style rules that apply to a document, indexed by the rightmost
@@ -34,6 +54,8 @@ pub struct Stylist {
     by_id: HashMap<String, Vec<u32>>,
     by_class: HashMap<String, Vec<u32>>,
     by_tag: HashMap<String, Vec<u32>>,
+    /// Rules whose subject's best key is an attribute, by attribute name.
+    by_attr: HashMap<String, Vec<u32>>,
     universal: Vec<u32>,
     quirks: bool,
     stats: SheetStats,
@@ -56,6 +78,7 @@ impl Stylist {
             by_id: HashMap::new(),
             by_class: HashMap::new(),
             by_tag: HashMap::new(),
+            by_attr: HashMap::new(),
             universal: Vec::new(),
             quirks: quirks_mode == QuirksMode::Quirks,
             stats: SheetStats::default(),
@@ -69,6 +92,60 @@ impl Stylist {
 
     pub fn stats(&self) -> SheetStats {
         self.stats
+    }
+
+    /// Keys required on ancestors of `selector`'s subject: those of every
+    /// compound directly followed by a descendant or child combinator. Such a
+    /// compound is an ancestor of the next one, which is the subject, one of
+    /// its ancestors, or a sibling of either, so it is always an ancestor of
+    /// the subject. A compound followed by a sibling combinator is not
+    /// (in `.a + .b .c`, `.a` is a sibling of `.c`'s ancestor).
+    fn ancestor_keys(&self, selector: &Complex) -> Box<[u64]> {
+        let mut keys = Vec::new();
+        for k in 0..selector.compounds.len().saturating_sub(1) {
+            if !matches!(
+                selector.combinators[k],
+                Combinator::Descendant | Combinator::Child
+            ) {
+                continue;
+            }
+            for simple in &selector.compounds[k].simple {
+                match simple {
+                    SimpleSelector::Id(id) => keys.push(key_hash(KEY_ID, &self.key(id))),
+                    SimpleSelector::Class(c) => keys.push(key_hash(KEY_CLASS, &self.key(c))),
+                    SimpleSelector::Type(t) => {
+                        keys.push(key_hash(KEY_TAG, &t.to_ascii_lowercase()));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        keys.into()
+    }
+
+    /// Sorted keys of every ancestor element of `el` (see [`Rule::ancestor_keys`]).
+    fn ancestor_key_set(&self, doc: &Document, el: NodeId) -> Vec<u64> {
+        let mut keys = Vec::new();
+        for a in doc.ancestors(el) {
+            let Some(tag) = doc.tag_name(a) else { continue };
+            keys.push(key_hash(KEY_TAG, &tag.to_ascii_lowercase()));
+            if let Some(id) = doc.attribute(a, "id") {
+                keys.push(key_hash(KEY_ID, &self.key(id)));
+            }
+            if let Some(classes) = doc.attribute(a, "class") {
+                for class in classes
+                    .split(|c: char| c.is_ascii_whitespace())
+                    .filter(|c| !c.is_empty())
+                {
+                    keys.push(key_hash(KEY_CLASS, &self.key(class)));
+                }
+            }
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        keys
     }
 
     fn key(&self, s: &str) -> String {
@@ -113,13 +190,23 @@ impl Stylist {
                         _ => None,
                     })
                 });
+                // Attribute names are least selective (`[href]` matches many
+                // elements) but still far better than testing every element.
+                let bucket = bucket.or_else(|| {
+                    subject.simple.iter().find_map(|s| match s {
+                        SimpleSelector::Attribute(a) => Some((3, &a.name)),
+                        _ => None,
+                    })
+                });
                 match bucket {
                     Some((0, key)) => self.by_id.entry(self.key(key)).or_default().push(index),
                     Some((1, key)) => self.by_class.entry(self.key(key)).or_default().push(index),
-                    Some((_, key)) => self.by_tag.entry(key.clone()).or_default().push(index),
+                    Some((2, key)) => self.by_tag.entry(key.clone()).or_default().push(index),
+                    Some((_, key)) => self.by_attr.entry(key.clone()).or_default().push(index),
                     None => self.universal.push(index),
                 }
                 self.rules.push(Rule {
+                    ancestor_keys: self.ancestor_keys(selector),
                     selector: selector.clone(),
                     specificity: selector.specificity(),
                     origin,
@@ -157,13 +244,37 @@ impl Stylist {
         if let Some(rules) = doc.tag_name(el).and_then(|t| self.by_tag.get(t)) {
             candidates.extend(rules);
         }
+        if !self.by_attr.is_empty()
+            && let Some(element) = doc.element(el)
+        {
+            for attr in &element.attrs {
+                // Selector names are lowercased; HTML parser names already are.
+                if let Some(rules) = self.by_attr.get(&*attr.name) {
+                    candidates.extend(rules);
+                }
+            }
+        }
         candidates.sort_unstable();
         candidates.dedup();
         let ctx = MatchContext {
             doc,
             quirks: self.quirks,
         };
-        candidates.retain(|&i| matches(ctx, &self.rules[i as usize].selector, el));
+        let needs_ancestors = candidates
+            .iter()
+            .any(|&i| !self.rules[i as usize].ancestor_keys.is_empty());
+        let ancestors = if needs_ancestors {
+            self.ancestor_key_set(doc, el)
+        } else {
+            Vec::new()
+        };
+        candidates.retain(|&i| {
+            let rule = &self.rules[i as usize];
+            rule.ancestor_keys
+                .iter()
+                .all(|k| ancestors.binary_search(k).is_ok())
+                && matches(ctx, &rule.selector, el)
+        });
         candidates
     }
 }
@@ -180,6 +291,15 @@ impl ComputedStyles {
         self.styles.get(node.index())?.as_deref()
     }
 
+    /// Number of distinct style objects (shared styles count once).
+    pub fn distinct_count(&self) -> usize {
+        let mut seen: Vec<*const ComputedStyle> =
+            self.styles.iter().flatten().map(Rc::as_ptr).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        seen.len()
+    }
+
     /// Shared handle to an element's style, for structures that outlive a borrow.
     pub fn get_rc(&self, node: NodeId) -> Option<Rc<ComputedStyle>> {
         self.styles.get(node.index())?.clone()
@@ -194,6 +314,9 @@ pub struct StyleStats {
     /// Elements whose style was shared with an earlier element instead of computed.
     pub shared: usize,
     pub inline_styles: usize,
+    /// Some computed value used a viewport unit (`vw`, `vh`, `vmin`,
+    /// `vmax`): styles must be recomputed when the viewport size changes.
+    pub viewport_dependent: bool,
 }
 
 fn is_css_style_element(doc: &Document, n: NodeId) -> bool {
@@ -321,10 +444,12 @@ pub fn compute_styles(
         sheets: stylist.stats(),
         ..StyleStats::default()
     };
+    let viewport_used = std::cell::Cell::new(false);
     let mut ctx = ComputeContext {
         root_font_size: crate::computed::INITIAL_FONT_SIZE,
         viewport_width: viewport.0,
         viewport_height: viewport.1,
+        viewport_used: &viewport_used,
     };
     // Style sharing: same parent style + same matched rules + no inline style
     // ⇒ identical computed style.
@@ -407,6 +532,7 @@ pub fn compute_styles(
         }
         styles[el.index()] = Some(style);
     }
+    stats.viewport_dependent = viewport_used.get();
     (ComputedStyles { styles }, stats)
 }
 
@@ -438,6 +564,37 @@ mod tests {
         let standards = format!("<!DOCTYPE html>{quirks}");
         assert_eq!(color_of(&standards, "a"), "rgb(0, 0, 0)");
         assert_eq!(color_of(&standards, "bar"), "rgb(0, 0, 0)");
+    }
+
+    #[test]
+    fn ancestor_filter_keeps_every_true_match() {
+        let html = "<!DOCTYPE html><style>            .box .x { color: rgb(1, 0, 0) }            #main > p span { color: rgb(2, 0, 0) }            .a + .b .c { color: rgb(3, 0, 0) }            .sib ~ .y { color: rgb(4, 0, 0) }            .missing .x { color: rgb(9, 9, 9) }            </style>            <div class='box other'><i class=x id=t1>1</i></div>            <div id=main><p><b><span id=t2>2</span></b></p></div>            <div class=a></div><div class=b><em class=c id=t3>3</em></div>            <p class=sib></p><q></q><p class=y id=t4>4</p>";
+        assert_eq!(color_of(html, "t1"), "rgb(1, 0, 0)");
+        assert_eq!(color_of(html, "t2"), "rgb(2, 0, 0)");
+        assert_eq!(color_of(html, "t3"), "rgb(3, 0, 0)");
+        assert_eq!(color_of(html, "t4"), "rgb(4, 0, 0)");
+        // Quirks mode: ancestor class keys compare case-insensitively.
+        assert_eq!(
+            color_of(
+                "<style>.BOX .x { color: rgb(5, 0, 0) }</style><div class=box><i class=x id=q>q</i></div>",
+                "q"
+            ),
+            "rgb(5, 0, 0)"
+        );
+    }
+
+    #[test]
+    fn viewport_unit_use_is_reported() {
+        let stats = |html: &str| {
+            let out = rustlite_html::parse_document(html);
+            let doc = &out.document;
+            compute_styles(doc, &stylist_for(doc), (800.0, 600.0)).1
+        };
+        assert!(!stats("<!DOCTYPE html><p style='width: 50%'>x").viewport_dependent);
+        assert!(stats("<!DOCTYPE html><p style='width: 50vw'>x").viewport_dependent);
+        assert!(
+            stats("<!DOCTYPE html><style>p { font-size: 2vmin }</style><p>x").viewport_dependent
+        );
     }
 
     #[test]

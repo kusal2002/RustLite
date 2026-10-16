@@ -67,7 +67,7 @@ pub fn shape_ui_text(fonts: &mut FontContext, text: &str, size: f32) -> UiText {
     let metrics = fonts.metrics(font, size);
     let mut runs = Vec::new();
     let mut x = 0.0;
-    for seg in fonts.shape(font, 400, false, size, text) {
+    for seg in fonts.shape(font, 400, false, size, text).iter() {
         let mut pen = 0.0;
         let glyphs: Rc<[PositionedGlyph]> = seg
             .glyphs

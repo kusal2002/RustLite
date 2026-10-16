@@ -105,6 +105,33 @@ impl Document {
         self.nodes.len()
     }
 
+    /// Approximate heap bytes: the node arena plus string payloads
+    /// (allocator overhead is not counted).
+    pub fn heap_bytes(&self) -> usize {
+        let payload: usize = self
+            .nodes
+            .iter()
+            .map(|n| match &n.data {
+                NodeData::Document => 0,
+                NodeData::Doctype {
+                    name,
+                    public_id,
+                    system_id,
+                } => name.capacity() + public_id.capacity() + system_id.capacity(),
+                NodeData::Element(e) => {
+                    e.name.len()
+                        + e.attrs.capacity() * std::mem::size_of::<Attribute>()
+                        + e.attrs
+                            .iter()
+                            .map(|a| a.name.len() + a.value.capacity())
+                            .sum::<usize>()
+                }
+                NodeData::Text(t) | NodeData::Comment(t) => t.capacity(),
+            })
+            .sum();
+        self.nodes.capacity() * std::mem::size_of::<Node>() + payload
+    }
+
     fn push(&mut self, data: NodeData) -> NodeId {
         let id = NodeId::from_index(self.nodes.len());
         self.nodes.push(Node {

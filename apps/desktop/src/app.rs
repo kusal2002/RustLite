@@ -78,7 +78,8 @@ impl App {
     }
 
     fn close(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(window) = self.window.take() {
+        if let Some(mut window) = self.window.take() {
+            window.log_all_memory();
             self.final_stats = Some(window.stats().clone());
         }
         event_loop.exit();
@@ -93,8 +94,8 @@ impl ApplicationHandler<AppEvent> for App {
         let initial = self
             .options
             .open
-            .as_ref()
-            .map(|p| p.to_string_lossy().into_owned());
+            .as_deref()
+            .map(crate::options::command_line_input);
         match BrowserWindow::new(
             event_loop,
             self.options.size,
@@ -202,7 +203,7 @@ pub fn render_headless(options: &Options, path: &Path) -> Result<HeadlessReport,
     );
     let mut tab = Tab::new(page, Some(Arc::new(loader)));
     if let Some(input) = &options.open {
-        if let Err(e) = tab.navigate(&input.to_string_lossy()) {
+        if let Err(e) = tab.navigate(&crate::options::command_line_input(input)) {
             tracing::warn!(error = %e, "navigation rejected");
         }
         let deadline = Instant::now() + HEADLESS_LOAD_TIMEOUT;
@@ -269,6 +270,7 @@ pub fn render_headless(options: &Options, path: &Path) -> Result<HeadlessReport,
         raster_ms = ms(raster_time),
         "headless frame written"
     );
+    tracing::info!(memory = %tab.page().memory_report(), "page memory");
     Ok(HeadlessReport {
         display_items: list.len(),
         raster_time,

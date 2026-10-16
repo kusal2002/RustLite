@@ -41,6 +41,8 @@ pub struct HtmlDocument {
     /// Loaded `<link rel=stylesheet>` sheets, by link element.
     external_sheets: HashMap<NodeId, Stylesheet>,
     styles: Option<ComputedStyles>,
+    /// The current styles used viewport units (see [`Page::set_viewport`]).
+    styles_use_viewport: bool,
     layout: Option<LayoutTree>,
 }
 
@@ -58,6 +60,63 @@ impl Content {
             Content::Blank => "about:blank",
             Content::Html(doc) => &doc.url,
         }
+    }
+}
+
+/// Approximate memory held by one page, per subsystem, in bytes. Estimates
+/// count payloads and container slots, not allocator overhead; shared font
+/// data and the network cache are reported elsewhere.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MemoryReport {
+    pub dom_nodes: usize,
+    pub dom_bytes: usize,
+    /// Distinct computed styles (sharing makes this far below the element count).
+    pub styles: usize,
+    pub style_bytes: usize,
+    pub layout: rustlite_layout::TreeSize,
+    pub images: usize,
+    pub image_bytes: usize,
+    pub display_items: usize,
+    pub display_list_bytes: usize,
+    pub glyph_cache_bytes: usize,
+    pub shape_cache_bytes: usize,
+}
+
+impl MemoryReport {
+    pub fn total_bytes(&self) -> usize {
+        self.dom_bytes
+            + self.style_bytes
+            + self.layout.bytes
+            + self.image_bytes
+            + self.display_list_bytes
+            + self.glyph_cache_bytes
+            + self.shape_cache_bytes
+    }
+}
+
+impl std::fmt::Display for MemoryReport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kib = |b: usize| b as f64 / 1024.0;
+        write!(
+            f,
+            "dom {:.0} KiB ({} nodes) · styles {:.0} KiB ({} distinct) · layout {:.0} KiB \
+             ({} boxes, {} fragments) · images {:.0} KiB ({}) · display list {:.0} KiB ({} items) · \
+             glyph cache {:.0} KiB · shape cache {:.0} KiB · total {:.0} KiB",
+            kib(self.dom_bytes),
+            self.dom_nodes,
+            kib(self.style_bytes),
+            self.styles,
+            kib(self.layout.bytes),
+            self.layout.boxes,
+            self.layout.fragments,
+            kib(self.image_bytes),
+            self.images,
+            kib(self.display_list_bytes),
+            self.display_items,
+            kib(self.glyph_cache_bytes),
+            kib(self.shape_cache_bytes),
+            kib(self.total_bytes()),
+        )
     }
 }
 
@@ -133,10 +192,14 @@ impl Page {
         }
     }
 
+    /// The CSS viewport changed (size or device scale): lay out again, and
+    /// restyle only if computed values depended on the viewport.
     fn invalidate_layout(&mut self) {
         self.paint_dirty = true;
         if let Content::Html(doc) = &mut self.content {
-            doc.styles = None;
+            if doc.styles_use_viewport {
+                doc.styles = None;
+            }
             doc.layout = None;
         }
         self.scroll_by(0.0);
@@ -176,6 +239,7 @@ impl Page {
             "styles computed"
         );
         doc.styles = Some(styles);
+        doc.styles_use_viewport = stats.viewport_dependent;
         doc.layout = None;
         self.style_count += 1;
     }
@@ -282,6 +346,7 @@ impl Page {
             url,
             dom: out.document,
             parse_errors: out.error_count,
+            styles_use_viewport: false,
             stylist,
             images,
             base_url,
@@ -494,6 +559,35 @@ impl Page {
         }
     }
 
+    /// Estimates this page's memory per subsystem (see [`MemoryReport`]).
+    pub fn memory_report(&self) -> MemoryReport {
+        let mut r = MemoryReport {
+            display_items: self.display_list.items().len(),
+            display_list_bytes: std::mem::size_of_val(self.display_list.items()),
+            ..MemoryReport::default()
+        };
+        if let Some(fonts) = &self.fonts {
+            r.glyph_cache_bytes = fonts.glyph_cache_bytes();
+            r.shape_cache_bytes = fonts.shape_cache_bytes();
+        }
+        let Content::Html(doc) = &self.content else {
+            return r;
+        };
+        r.dom_nodes = doc.dom.node_count();
+        r.dom_bytes = doc.dom.heap_bytes();
+        if let Some(styles) = &doc.styles {
+            r.styles = styles.distinct_count();
+            r.style_bytes = r.styles * std::mem::size_of::<rustlite_style::ComputedStyle>()
+                + doc.dom.node_count() * std::mem::size_of::<usize>();
+        }
+        if let Some(tree) = &doc.layout {
+            r.layout = rustlite_layout::tree_size(tree);
+        }
+        r.images = doc.images.len();
+        r.image_bytes = doc.images.values().map(|i| i.rgba.capacity()).sum();
+        r
+    }
+
     /// Removes the font context so another page can use it; see
     /// [`Page::set_fonts`]. Tabs in one window pass a single context around
     /// instead of each loading the system fonts and keeping its own caches.
@@ -680,6 +774,49 @@ mod tests {
         page.set_viewport(Size::new(200, 250));
         assert_eq!(page.scroll_y(), 50.0);
         assert_eq!(page.layout_count(), 2);
+    }
+
+    #[test]
+    fn memory_report_covers_each_subsystem() {
+        let mut page = fontless(Size::new(200, 100));
+        assert_eq!(page.memory_report().total_bytes(), 0);
+        page.load_html(
+            "test:doc",
+            "<!DOCTYPE html><ul><li>a</li><li>b</li><li>c</li></ul><div style='height: 10px; background: red'></div>",
+        );
+        page.display_list();
+        let r = page.memory_report();
+        assert!(r.dom_nodes >= 9 && r.dom_bytes > 0, "{r:?}");
+        assert!(
+            r.styles > 0 && r.styles < r.dom_nodes,
+            "shared styles counted once: {r:?}"
+        );
+        assert!(r.layout.boxes >= 5 && r.layout.bytes > 0, "{r:?}");
+        assert!(r.display_items > 0 && r.display_list_bytes > 0);
+        assert!(r.total_bytes() >= r.dom_bytes + r.layout.bytes);
+        assert!(r.to_string().contains("total"));
+    }
+
+    #[test]
+    fn resize_restyles_only_viewport_dependent_documents() {
+        let resize = |html: &str| {
+            let mut page = fontless(Size::new(200, 100));
+            page.load_html("test:doc", html);
+            page.layout();
+            page.set_viewport(Size::new(300, 100));
+            page.set_device_scale(2.0);
+            page.layout();
+            (page.style_count(), page.layout_count())
+        };
+        assert_eq!(
+            resize("<!DOCTYPE html><div style='width: 50%; height: 10px'></div>"),
+            (1, 3),
+            "percentages are resolved by layout, not style (each change relayouts once)"
+        );
+        assert_eq!(
+            resize("<!DOCTYPE html><div style='width: 50vw; height: 10px'></div>"),
+            (3, 3)
+        );
     }
 
     #[test]

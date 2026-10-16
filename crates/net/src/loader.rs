@@ -6,8 +6,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Instant;
 
-use crate::{FetchConfig, Fetcher, NetError, Request, Response};
+use crate::{CacheMode, CacheStats, FetchConfig, Fetcher, HttpCache, NetError, Request, Response};
 
 /// Shared cancellation flag. Cancelling is idempotent and cheap.
 #[derive(Debug, Clone, Default)]
@@ -58,6 +59,8 @@ pub const QUEUE_CAPACITY: usize = 64;
 pub struct Loader {
     queue: Option<SyncSender<Job>>,
     workers: Vec<JoinHandle<()>>,
+    cache: Arc<Mutex<HttpCache>>,
+    notify: Notify,
 }
 
 impl std::fmt::Debug for Loader {
@@ -75,26 +78,49 @@ impl Loader {
         let (tx, rx) = sync_channel::<Job>(QUEUE_CAPACITY);
         let rx = Arc::new(Mutex::new(rx));
         let fetcher = Fetcher::new(config);
+        let cache = Arc::new(Mutex::new(HttpCache::new(config.cache_bytes)));
         let workers = (0..threads.max(1))
             .map(|i| {
                 let rx: Arc<Mutex<Receiver<Job>>> = rx.clone();
                 let fetcher = fetcher.clone();
                 let notify = notify.clone();
+                let cache = cache.clone();
                 std::thread::Builder::new()
                     .name(format!("rustlite-net-{i}"))
-                    .spawn(move || worker(&rx, &fetcher, &notify))
+                    .spawn(move || worker(&rx, &fetcher, &notify, &cache))
                     .expect("failed to spawn network worker thread")
             })
             .collect();
         Self {
             queue: Some(tx),
             workers,
+            cache,
+            notify,
         }
+    }
+
+    /// HTTP cache counters (entries, bytes, hits, misses, evictions).
+    pub fn cache_stats(&self) -> CacheStats {
+        self.cache.lock().map(|c| c.stats()).unwrap_or_default()
     }
 
     /// Queues `request`. The result arrives through `notify` with `id`.
     pub fn load(&self, id: u64, request: Request, cancel: CancelToken) -> Result<(), LoaderError> {
         let queue = self.queue.as_ref().ok_or(LoaderError::ShutDown)?;
+        if request.cache == CacheMode::Default
+            && let Some(response) =
+                self.cache.lock().ok().and_then(|mut c| {
+                    c.get(request.url.as_str(), request.destination, Instant::now())
+                })
+        {
+            tracing::debug!(id, url = %request.url, "served from cache");
+            (self.notify)(LoadResult {
+                id,
+                request,
+                result: Ok(response),
+            });
+            return Ok(());
+        }
         queue
             .try_send(Job {
                 id,
@@ -118,7 +144,7 @@ impl Drop for Loader {
     }
 }
 
-fn worker(rx: &Mutex<Receiver<Job>>, fetcher: &Fetcher, notify: &Notify) {
+fn worker(rx: &Mutex<Receiver<Job>>, fetcher: &Fetcher, notify: &Notify, cache: &Mutex<HttpCache>) {
     loop {
         // Hold the lock only while receiving.
         let job = match rx.lock() {
@@ -132,6 +158,16 @@ fn worker(rx: &Mutex<Receiver<Job>>, fetcher: &Fetcher, notify: &Notify) {
             fetcher.fetch(&job.request, &job.cancel)
         };
         tracing::debug!(id = job.id, url = %job.request.url, ok = result.is_ok(), "load finished");
+        if let Ok(response) = &result
+            && let Ok(mut cache) = cache.lock()
+        {
+            cache.put(
+                job.request.url.as_str(),
+                job.request.destination,
+                response,
+                Instant::now(),
+            );
+        }
         notify(LoadResult {
             id: job.id,
             request: job.request,

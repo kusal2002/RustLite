@@ -188,7 +188,7 @@ fn shape(text: &str, f: &StyleFont, fonts: &mut FontContext) -> (Vec<(f32, Glyph
     };
     let mut x = 0.0;
     let mut runs = Vec::new();
-    for seg in fonts.shape(font, f.weight, f.italic, f.size, text) {
+    for seg in fonts.shape(font, f.weight, f.italic, f.size, text).iter() {
         let mut pen = 0.0;
         let glyphs: Rc<[PositionedGlyph]> = seg
             .glyphs

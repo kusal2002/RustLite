@@ -222,6 +222,55 @@ pub fn hit_test(tree: &LayoutTree, x: f32, y: f32) -> Option<NodeId> {
     best
 }
 
+/// Size of a layout tree, for memory reporting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TreeSize {
+    pub boxes: usize,
+    pub lines: usize,
+    pub fragments: usize,
+    pub glyphs: usize,
+    /// Approximate heap bytes (boxes, lines, fragments, fragment text, glyph
+    /// arrays). Styles are shared with the style system and not counted.
+    pub bytes: usize,
+}
+
+/// Counts boxes, lines, fragments and glyphs in `tree`.
+pub fn tree_size(tree: &LayoutTree) -> TreeSize {
+    use std::mem::size_of;
+    let mut size = TreeSize::default();
+    let mut stack: Vec<&BlockBox> = tree.root.iter().collect();
+    while let Some(b) = stack.pop() {
+        size.boxes += 1;
+        size.bytes += size_of::<BlockBox>();
+        match &b.children {
+            BlockChildren::Blocks(kids) => stack.extend(kids.iter()),
+            BlockChildren::Inline(inline) => {
+                size.bytes += inline.items.capacity() * size_of::<InlineItem>();
+                for item in &inline.items {
+                    if let InlineItem::Text { text, .. } = item {
+                        size.bytes += text.capacity();
+                    }
+                }
+                for line in &inline.lines {
+                    size.lines += 1;
+                    size.bytes += size_of::<LineBox>();
+                    for f in &line.fragments {
+                        size.fragments += 1;
+                        size.bytes += size_of::<TextFragment>() + f.text.capacity();
+                        for (_, run) in &f.runs {
+                            size.glyphs += run.glyphs.len();
+                            size.bytes +=
+                                size_of::<(f32, GlyphRun)>() + std::mem::size_of_val(&*run.glyphs);
+                        }
+                    }
+                }
+            }
+            BlockChildren::Empty => {}
+        }
+    }
+    size
+}
+
 /// Border-box rectangles of every element that generated boxes or text.
 /// Inline elements get the union of their text fragments.
 pub fn element_rects(tree: &LayoutTree) -> HashMap<NodeId, RectF> {

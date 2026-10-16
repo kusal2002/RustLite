@@ -384,3 +384,22 @@ fn find_text_matches_across_elements_and_wraps() {
         "no match across blocks"
     );
 }
+
+#[test]
+fn paint_emits_only_what_the_viewport_can_show() {
+    let blocks = "<div style='height: 100px; background: red'></div>".repeat(200);
+    let l = lay_out(&format!("{RESET}{blocks}"));
+    let count = |scroll: f32| {
+        let mut list = rustlite_paint::DisplayList::new();
+        paint(&l.tree, scroll, 1.0, &mut list);
+        list.items()
+            .iter()
+            .filter(|i| matches!(i, rustlite_paint::DisplayItem::SolidRect { color, .. } if color.r == 255 && color.g == 0))
+            .count()
+    };
+    // 600px viewport over 100px blocks: 6 fully visible, one more at a
+    // partial edge; nothing like the 200 in the document.
+    assert!((6..=8).contains(&count(0.0)), "{}", count(0.0));
+    assert!((6..=8).contains(&count(5_050.0)), "{}", count(5_050.0));
+    assert_eq!(count(1e6), 0);
+}

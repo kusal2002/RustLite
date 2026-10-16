@@ -1,0 +1,23 @@
+[package]
+name = "rustlite-bench"
+description = "Repeatable pipeline benchmarks for RustLite (no external harness)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "rustlite-bench"
+path = "src/main.rs"
+
+[dependencies]
+rustlite-dom.workspace = true
+rustlite-fonts.workspace = true
+rustlite-html.workspace = true
+rustlite-layout.workspace = true
+rustlite-paint.workspace = true
+rustlite-renderer.workspace = true
+rustlite-style.workspace = true
+
+[lints]
+workspace = true
