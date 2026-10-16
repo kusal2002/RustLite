@@ -1,0 +1,15 @@
+<html> 0 0 800 190
+<head> 0 0 0 0
+<style> 0 0 0 0
+<body> 0 0 800 190
+<div#capped> 0 0 300 10
+<div#capped-centered> 200 10 400 10
+<div#floor> 0 20 120 10
+<div#max-beats-width> 0 30 200 10
+<div#min-beats-max> 0 40 150 10
+<div#tall> 0 50 800 40
+<div#short> 0 90 800 25
+<img#img-fit> 0 115 100 50
+<img#img-ratio> 0 165 20 10
+<div#wrap> 0 175 30 15
+<img#img-pct> 0 175 30 15

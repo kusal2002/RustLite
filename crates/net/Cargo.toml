@@ -1,0 +1,17 @@
+[package]
+name = "rustlite-net"
+description = "HTTP(S) fetching, redirects, limits, charset decoding and a background loader for RustLite."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+encoding_rs.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+ureq.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

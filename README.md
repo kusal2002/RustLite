@@ -3,11 +3,12 @@
 An original, cross-platform web browser engine written in Rust: HTML, DOM, CSS,
 layout, paint and rendering are RustLite code, not a wrapped engine.
 
-**Status:** Phase 5. RustLite opens and renders local HTML files with its own
-HTML parser, CSS engine, block/inline layout, glyph rasterizer and CPU
-renderer (each verified against Chromium on golden fixtures), including local
-images and list markers. Normal flow only; no floats, flex/grid, networking or
-JavaScript yet. See [docs/roadmap.md](docs/roadmap.md) and
+**Status:** Phase 6. RustLite browses: it loads pages over HTTP(S) with
+certificate validation, follows links, keeps history, and renders with its own
+HTML parser, CSS engine, block/inline layout, glyph rasterizer and CPU renderer
+(each verified against Chromium on golden fixtures). Normal flow only; no
+floats, flex/grid or JavaScript yet, and no sandbox: see
+[docs/security.md](docs/security.md) before browsing untrusted sites. See [docs/roadmap.md](docs/roadmap.md) and
 [docs/progress.md](docs/progress.md).
 
 ## Build and run
@@ -30,10 +31,14 @@ Options:
 --dump-layout <HTML_FILE> Print element boxes after layout (viewport = --size)
 ```
 
-Open a page: `cargo run --release -- tests/pages/sample.html`
+Open a page: `cargo run --release -- https://example.com/` or a local file:
+`cargo run --release -- tests/pages/sample.html`. Without an argument the
+address bar is focused; type a URL or path and press Enter.
 
-Shortcuts: Ctrl+Q / Ctrl+W (Cmd on macOS) quit · F12 debug overlay ·
-wheel, ↑/↓, Page Up/Down, Space/Shift+Space, Home/End scroll.
+Shortcuts: Ctrl+L / Alt+D / F6 address bar · Alt+←/→ back/forward ·
+F5 / Ctrl+R reload · Esc stop · Ctrl+Q / Ctrl+W quit (Cmd on macOS) ·
+F12 debug overlay · wheel, ↑/↓, Page Up/Down, Space/Shift+Space, Home/End scroll.
+Click links to follow them.
 Logging: `RUST_LOG=debug cargo run`.
 
 ## Checks

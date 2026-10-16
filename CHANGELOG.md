@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added — 2026-10-16 (Phase 6)
+- `rustlite-net`: HTTP(S) fetching (ureq + rustls, OS trust store), manual
+  redirects with scheme checks, body limits, timeouts, cancellation, charset
+  detection (encoding_rs), and a bounded background loader.
+- `Tab` navigation in browser-core: stale-result protection, history,
+  back/forward/reload/stop, error pages, `file:` only for user navigations,
+  `<base href>`, linked stylesheets and images over HTTP, link hit testing.
+- Desktop: editable address bar, link clicks, toolbar text and icons,
+  loading bar, navigation shortcuts; headless rendering of URLs.
+- CSS: `font` shorthand, `min-/max-width/height`, `light-dark()`.
+- Docs: networking.md, NET-001, security.md rewritten for network content.
+
 ### Added — 2026-10-16 (Phase 5)
 - On-demand glyph rasterizer in `rustlite-fonts` (fontdue removed; ADR-0003):
   sample-page memory 73.6 → 23.9 MB.

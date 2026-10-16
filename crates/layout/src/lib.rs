@@ -183,6 +183,40 @@ pub fn layout_document_with_images(
     }
 }
 
+/// The innermost element at document point (`x`, `y`) in CSS px: the
+/// innermost inline element of the text under the point, an image, or else
+/// the deepest block containing it. Later content wins, matching paint order.
+pub fn hit_test(tree: &LayoutTree, x: f32, y: f32) -> Option<NodeId> {
+    let inside = |r: &RectF| x >= r.x && x < r.right() && y >= r.y && y < r.bottom();
+    let mut best = None;
+    let mut stack: Vec<&BlockBox> = tree.root.iter().collect();
+    while let Some(b) = stack.pop() {
+        if !inside(&b.rect) {
+            // Content can overflow its block, so descendants are still searched.
+        } else if b.node.is_some() {
+            best = b.node;
+        }
+        match &b.children {
+            BlockChildren::Blocks(kids) => stack.extend(kids.iter().rev()),
+            BlockChildren::Inline(inline) => {
+                for f in inline.lines.iter().flat_map(|l| &l.fragments) {
+                    if !inside(&f.rect) {
+                        continue;
+                    }
+                    best = match &inline.items[f.item] {
+                        InlineItem::Text { ancestors, .. } => ancestors.last().copied().or(b.node),
+                        InlineItem::Atomic { node, .. } | InlineItem::LineBreak { node, .. } => {
+                            Some(*node)
+                        }
+                    };
+                }
+            }
+            BlockChildren::Empty => {}
+        }
+    }
+    best
+}
+
 /// Border-box rectangles of every element that generated boxes or text.
 /// Inline elements get the union of their text fragments.
 pub fn element_rects(tree: &LayoutTree) -> HashMap<NodeId, RectF> {

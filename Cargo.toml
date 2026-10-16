@@ -9,6 +9,7 @@ members = [
     "crates/fonts",
     "crates/html",
     "crates/layout",
+    "crates/net",
     "crates/paint",
     "crates/renderer",
     "crates/style",
@@ -29,11 +30,13 @@ rustlite-dom = { path = "crates/dom" }
 rustlite-fonts = { path = "crates/fonts" }
 rustlite-html = { path = "crates/html" }
 rustlite-layout = { path = "crates/layout" }
+rustlite-net = { path = "crates/net" }
 rustlite-paint = { path = "crates/paint" }
 rustlite-renderer = { path = "crates/renderer" }
 rustlite-style = { path = "crates/style" }
 
 # External crates (see docs/architecture.md#dependencies for rationale)
+encoding_rs = "0.8.42"
 fontdb = "0.24"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif"] }
 rustybuzz = "0.20.1"
@@ -41,6 +44,8 @@ ttf-parser = "0.25.1"
 softbuffer = { version = "0.4.8", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
 thiserror = "2.0"
 tracing = "0.1.44"
+ureq = { version = "3.4.2", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
+url = "2.5.8"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 winit = "0.30"
 

@@ -11,24 +11,23 @@ acceptance criteria pass; see [progress.md](progress.md) for live status.
 | 3 | CSS parser, selectors, cascade, computed style, UA stylesheet | Fixtures → expected computed styles | **Done** (2026-10-16): 11/11 fixtures match Chromium |
 | 4 | Block/inline layout, text measurement, line breaking, scrolling | Simple pages' geometry within tolerance | **Done** (2026-10-16): 9/9 fixtures within 0.1px of Chromium |
 | 5 | Display lists for text/images, clipping, GPU presentation | Renders a simple HTML page without another engine | **Done on CPU** (2026-10-16): text, boxes, images, list markers, border styles, clipping, device scale. GPU presentation deferred (ADR-0001) |
-| 6 | HTTP(S), URL resolution, redirects, errors | Loads local test server + selected pages | Planned |
-| 7 | Address bar, navigation, history, loading state, tabs | Navigate and recover from failures | Planned |
+| 6 | HTTP(S), URL resolution, redirects, errors | Loads local test server + selected pages | **Done** (2026-10-16): local-server tests; example.com; bad certificates refused |
+| 7 | Address bar, navigation, history, loading state, tabs | Navigate and recover from failures | **Mostly done**: address bar, links, history, loading state, error recovery; multiple tabs remain |
 | 8 | Benchmarks, memory reporting, bounded caches, incremental invalidation | Measured, regression-tested | Planned (frame-time stats exist) |
 | 9 | JS runtime (Boa evaluation), first DOM APIs | Simple interactive pages | Planned |
 | 10 | Advanced CSS, Web APIs, isolation, security | Every claim tested + documented | Planned |
 
-## Next milestone: Phase 6, networking
+## Next milestones
 
-1. `crates/net`: URL parsing and resolution (`url` crate), an HTTP(S) client
-   with rustls and platform certificate validation, run off the UI thread;
-   redirects (bounded), timeouts, response-size limits, cancellation of stale
-   navigations, MIME sniffing basics and charset decoding.
-2. Navigation state machine in `browser-core` (idle → loading → committed /
-   failed) with stale-result protection, and an error page.
-3. Subresources: `<link rel=stylesheet>` and `<img>` over HTTP(S), deduplicated
-   and bounded; images move off the UI thread.
-4. Desktop: address bar text input, Go/Reload/Back/Forward.
-5. Tests against a local test server (no external network in CI).
+**Phase 7 completion:** multiple tabs (tab strip, Ctrl+T/W, per-tab loader
+ids), clipboard paste into the address bar, find-in-page, a history list.
+
+**Phase 8 performance:** criterion benchmarks for parse/style/layout/raster,
+memory reporting per subsystem, an HTTP cache with a byte budget, incremental
+restyle/relayout instead of whole-document invalidation, dirty-rect repaint.
+
+**Before Phase 9 (JavaScript):** a process-isolation ADR (sandboxed renderer
+per site), same-origin policy for subresources, parser fuzzing in CI.
 
 Still open from earlier phases: inline backgrounds/borders, `inline-block`,
 floats/positioning, 3D border shading, broken-image rendering, GPU backend.

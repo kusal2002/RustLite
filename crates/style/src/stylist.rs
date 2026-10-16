@@ -212,13 +212,43 @@ fn is_css_style_element(doc: &Document, n: NodeId) -> bool {
 }
 
 /// Builds the stylist for `doc`: the UA sheet plus every `<style>` element in
-/// tree order. (`<link rel=stylesheet>` needs networking, Phase 6.)
+/// tree order. External sheets are not included (see [`stylist_with_external`]).
 pub fn stylist_for(doc: &Document) -> Stylist {
+    stylist_with_external(doc, |_| None)
+}
+
+/// Is `n` a `<link>` to a stylesheet that applies to all media?
+pub fn is_stylesheet_link(doc: &Document, n: NodeId) -> bool {
+    if !doc.is_element_named(n, "link") || doc.attribute(n, "href").is_none() {
+        return false;
+    }
+    let rel = doc.attribute(n, "rel").unwrap_or("");
+    let has = |token: &str| {
+        rel.split_ascii_whitespace()
+            .any(|t| t.eq_ignore_ascii_case(token))
+    };
+    let media_ok = doc.attribute(n, "media").is_none_or(|m| {
+        let m = m.trim();
+        m.is_empty() || m.eq_ignore_ascii_case("all") || m.eq_ignore_ascii_case("screen")
+    });
+    has("stylesheet") && !has("alternate") && media_ok
+}
+
+/// Builds the stylist for `doc` with `<style>` elements and loaded external
+/// sheets (`external(link_node)`), in tree order as the cascade requires.
+pub fn stylist_with_external<'a>(
+    doc: &Document,
+    external: impl Fn(NodeId) -> Option<&'a Stylesheet>,
+) -> Stylist {
     let mut stylist = Stylist::new(doc.quirks_mode());
     for n in doc.descendants(doc.root()) {
         if is_css_style_element(doc, n) {
             let sheet = rustlite_css::parse_stylesheet(&doc.text_content(n));
             stylist.add_stylesheet(&sheet, Origin::Author);
+        } else if is_stylesheet_link(doc, n)
+            && let Some(sheet) = external(n)
+        {
+            stylist.add_stylesheet(sheet, Origin::Author);
         }
     }
     stylist
@@ -479,5 +509,48 @@ mod hint_tests {
         );
         // The UA sheet does not.
         assert_eq!(width_of("<img>"), "auto");
+    }
+}
+
+#[cfg(test)]
+mod external_tests {
+    use super::*;
+
+    #[test]
+    fn external_sheets_cascade_in_document_order() {
+        let out = rustlite_html::parse_document(
+            "<style>p { color: rgb(1, 1, 1) }</style>\
+             <link rel=stylesheet href=a.css>\
+             <link rel='alternate stylesheet' href=alt.css>\
+             <link rel=stylesheet media=print href=print.css>\
+             <style>p.late { color: rgb(3, 3, 3) }</style><p id=a>x</p><p class=late id=b>y</p>",
+        );
+        let doc = &out.document;
+        let sheet = rustlite_css::parse_stylesheet("p { color: rgb(2, 2, 2) }");
+        let links: Vec<_> = doc
+            .descendants(doc.root())
+            .filter(|&n| doc.is_element_named(n, "link"))
+            .collect();
+        assert!(is_stylesheet_link(doc, links[0]));
+        assert!(
+            !is_stylesheet_link(doc, links[1]),
+            "alternate sheets are off by default"
+        );
+        assert!(
+            !is_stylesheet_link(doc, links[2]),
+            "print-only sheets do not apply"
+        );
+        let stylist = stylist_with_external(doc, |n| (n == links[0]).then_some(&sheet));
+        let (styles, _) = compute_styles(doc, &stylist, (800.0, 600.0));
+        let color = |id: &str| {
+            let n = doc
+                .descendants(doc.root())
+                .find(|&n| doc.attribute(n, "id") == Some(id))
+                .unwrap();
+            crate::resolved_value(styles.get(n).unwrap(), "color").unwrap()
+        };
+        // The linked sheet comes after the first <style>, before the second.
+        assert_eq!(color("a"), "rgb(2, 2, 2)");
+        assert_eq!(color("b"), "rgb(3, 3, 3)");
     }
 }

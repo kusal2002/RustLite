@@ -5,13 +5,14 @@ use std::path::PathBuf;
 use rustlite_paint::Size;
 
 pub const USAGE: &str = "\
-Usage: rustlite [OPTIONS] [HTML_FILE]
+Usage: rustlite [OPTIONS] [URL_OR_FILE]
 
-Opens HTML_FILE (a local file) if given, otherwise about:blank.
+Opens URL_OR_FILE (an http(s) URL or a local HTML file) if given, otherwise
+about:blank with the address bar focused.
 
 Options:
   --size <WxH>              Initial window size in physical pixels (default 1024x768)
-  --headless <PNG>          Render one frame without opening a window and write it as PNG
+  --headless <PNG>          Load URL_OR_FILE, render one frame without a window, write PNG
   --exit-after-frames <N>   Close the window after presenting N frames (smoke testing)
   --dump-dom <HTML_FILE>    Parse a local HTML file and print its DOM tree (html5lib format)
   --dump-style <HTML_FILE>  Print computed styles of a local HTML file (viewport = --size)

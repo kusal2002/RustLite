@@ -1,22 +1,32 @@
 //! Browser toolbar: layout, hit testing, and painting.
 //!
 //! The toolbar is browser UI, not web content, so it is painted directly into
-//! the frame display list rather than through the page pipeline. Text labels
-//! arrive with font support (roadmap phase 4/5); until then controls are
-//! drawn as shapes.
+//! the frame display list rather than through the page pipeline. Its text
+//! (URL, button icons) is shaped with the same font context as the page.
 
-use rustlite_paint::{Color, DisplayList, Point, Rect};
+use std::rc::Rc;
+
+use rustlite_fonts::{Family, FontContext};
+use rustlite_paint::{Color, DisplayItem, DisplayList, GlyphRun, Point, PositionedGlyph, Rect};
 
 /// Toolbar height in logical pixels.
 const HEIGHT: f64 = 44.0;
 const PADDING: f64 = 6.0;
+/// UI font size in logical pixels.
+pub const UI_FONT_SIZE: f32 = 14.0;
 
 const BACKGROUND: Color = Color::rgb(0xF1, 0xF3, 0xF4);
 const SEPARATOR: Color = Color::rgb(0xDA, 0xDC, 0xE0);
 const BUTTON: Color = Color::rgb(0xE6, 0xE8, 0xEB);
 const BUTTON_HOVER: Color = Color::rgb(0xD2, 0xD5, 0xDA);
+const ICON: Color = Color::rgb(0x3C, 0x40, 0x43);
+const ICON_DISABLED: Color = Color::rgb(0xA8, 0xAB, 0xAF);
 const ADDRESS_FIELD: Color = Color::WHITE;
 const ADDRESS_BORDER: Color = Color::rgb(0xC4, 0xC7, 0xCC);
+const ADDRESS_FOCUS_BORDER: Color = Color::rgb(0x1A, 0x73, 0xE8);
+const ADDRESS_TEXT: Color = Color::rgb(0x20, 0x21, 0x24);
+const SELECTION: Color = Color::rgb(0xC2, 0xDB, 0xFF);
+const LOADING_BAR: Color = Color::rgb(0x1A, 0x73, 0xE8);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolbarButton {
@@ -37,13 +47,88 @@ pub enum ToolbarHit {
     Background,
 }
 
+/// Shaped UI text: glyph runs with x offsets, total width, and ascent (CSS px).
+#[derive(Debug, Clone, Default)]
+pub struct UiText {
+    pub runs: Vec<(f32, GlyphRun)>,
+    /// Pen x after each char boundary, for caret placement: (byte index, x).
+    pub carets: Vec<(usize, f32)>,
+    pub width: f32,
+    pub ascent: f32,
+    pub descent: f32,
+}
+
+/// Shapes `text` in the UI font. Caret positions come from shaping each
+/// prefix's width, which is exact for the short strings the toolbar shows.
+pub fn shape_ui_text(fonts: &mut FontContext, text: &str, size: f32) -> UiText {
+    let Some(font) = fonts.select(&[Family::SansSerif], 400, false) else {
+        return UiText::default();
+    };
+    let metrics = fonts.metrics(font, size);
+    let mut runs = Vec::new();
+    let mut x = 0.0;
+    for seg in fonts.shape(font, 400, false, size, text) {
+        let mut pen = 0.0;
+        let glyphs: Rc<[PositionedGlyph]> = seg
+            .glyphs
+            .iter()
+            .map(|g| {
+                let p = PositionedGlyph {
+                    id: g.id,
+                    x: pen + g.x_offset,
+                    y: -g.y_offset,
+                };
+                pen += g.x_advance;
+                p
+            })
+            .collect();
+        runs.push((
+            x,
+            GlyphRun {
+                font: seg.font,
+                size,
+                glyphs,
+            },
+        ));
+        x += seg.advance;
+    }
+    let mut carets = vec![(0, 0.0)];
+    for (i, c) in text.char_indices() {
+        let end = i + c.len_utf8();
+        carets.push((end, fonts.measure(font, 400, false, size, &text[..end])));
+    }
+    UiText {
+        runs,
+        carets,
+        width: x,
+        ascent: metrics.ascent,
+        descent: metrics.descent,
+    }
+}
+
+/// Everything the toolbar shows that changes at runtime.
+#[derive(Debug, Clone, Default)]
+pub struct ToolbarView {
+    pub hovered: Option<ToolbarButton>,
+    pub can_back: bool,
+    pub can_forward: bool,
+    pub loading: bool,
+    pub address: UiText,
+    /// Caret byte index when the address field is focused.
+    pub caret: Option<usize>,
+    pub all_selected: bool,
+    /// Icons for back, forward and reload (or stop while loading).
+    pub icons: [UiText; 3],
+}
+
 /// Toolbar geometry for one window width and scale factor, in physical pixels.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ToolbarLayout {
     pub bounds: Rect,
     pub buttons: [(ToolbarButton, Rect); 3],
     pub address_field: Rect,
     separator_width: u32,
+    scale: f32,
 }
 
 fn px(logical: f64, scale: f64) -> u32 {
@@ -75,6 +160,7 @@ impl ToolbarLayout {
             buttons,
             address_field: Rect::new(x as i32, pad as i32, address_width, control),
             separator_width: px(1.0, scale),
+            scale: scale as f32,
         }
     }
 
@@ -95,30 +181,115 @@ impl ToolbarLayout {
         Some(ToolbarHit::Background)
     }
 
-    pub fn paint(&self, hovered: Option<ToolbarButton>, out: &mut DisplayList) {
+    /// Text inset inside the address field, in device px.
+    fn text_inset(&self) -> f32 {
+        8.0 * self.scale
+    }
+
+    /// Draws `text` with its baseline vertically centered in `rect`.
+    fn text(&self, out: &mut DisplayList, rect: Rect, x: f32, text: &UiText, color: Color) {
+        let s = self.scale;
+        let line = (text.ascent + text.descent) * s;
+        let baseline = rect.y as f32 + (rect.height as f32 - line) / 2.0 + text.ascent * s;
+        for (dx, run) in &text.runs {
+            out.push(DisplayItem::Text {
+                x: x + dx * s,
+                y: baseline.round(),
+                scale: s,
+                color,
+                run: run.clone(),
+            });
+        }
+    }
+
+    pub fn paint(&self, view: &ToolbarView, out: &mut DisplayList) {
         out.fill_rect(self.bounds, BACKGROUND);
         let sep = self.separator_width.min(self.bounds.height);
         out.fill_rect(
             Rect::new(0, (self.bounds.height - sep) as i32, self.bounds.width, sep),
             SEPARATOR,
         );
-        for (button, rect) in self.buttons {
-            let color = if hovered == Some(button) {
+        for (i, (button, rect)) in self.buttons.into_iter().enumerate() {
+            let color = if view.hovered == Some(button) {
                 BUTTON_HOVER
             } else {
                 BUTTON
             };
             out.fill_rect(rect, color);
+            let enabled = match button {
+                ToolbarButton::Back => view.can_back,
+                ToolbarButton::Forward => view.can_forward,
+                ToolbarButton::Reload => true,
+            };
+            let icon = &view.icons[i];
+            let x = rect.x as f32 + (rect.width as f32 - icon.width * self.scale) / 2.0;
+            self.text(
+                out,
+                rect,
+                x.round(),
+                icon,
+                if enabled { ICON } else { ICON_DISABLED },
+            );
         }
-        out.fill_rect(self.address_field, ADDRESS_FIELD);
-        out.stroke_rect(self.address_field, self.separator_width, ADDRESS_BORDER);
+
+        let field = self.address_field;
+        out.fill_rect(field, ADDRESS_FIELD);
+        let focused = view.caret.is_some();
+        let border = if focused {
+            ADDRESS_FOCUS_BORDER
+        } else {
+            ADDRESS_BORDER
+        };
+        out.stroke_rect(field, self.separator_width, border);
+
+        out.push_clip(field.inset(self.separator_width));
+        let text_x = field.x as f32 + self.text_inset();
+        if view.all_selected && view.address.width > 0.0 {
+            let pad = (4.0 * self.scale) as u32;
+            out.fill_rect(
+                Rect::new(
+                    text_x.round() as i32,
+                    field.y + pad as i32,
+                    (view.address.width * self.scale).ceil() as u32,
+                    field.height.saturating_sub(2 * pad),
+                ),
+                SELECTION,
+            );
+        }
+        self.text(out, field, text_x, &view.address, ADDRESS_TEXT);
+        if let Some(caret) = view.caret.filter(|_| !view.all_selected) {
+            let x = view
+                .address
+                .carets
+                .iter()
+                .find(|(i, _)| *i == caret)
+                .map_or(0.0, |(_, x)| *x);
+            let pad = (6.0 * self.scale) as u32;
+            out.fill_rect(
+                Rect::new(
+                    (text_x + x * self.scale).round() as i32,
+                    field.y + pad as i32,
+                    self.separator_width.max(1),
+                    field.height.saturating_sub(2 * pad),
+                ),
+                ADDRESS_TEXT,
+            );
+        }
+        out.pop_clip();
+
+        if view.loading {
+            let h = (2.0 * self.scale).round().max(1.0) as u32;
+            out.fill_rect(
+                Rect::new(0, (self.bounds.height - h) as i32, self.bounds.width, h),
+                LOADING_BAR,
+            );
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustlite_paint::DisplayItem;
 
     #[test]
     fn layout_scales_with_dpi() {
@@ -170,21 +341,62 @@ mod tests {
         assert_eq!(layout.hit_test(Point::new(1, 500)), None);
     }
 
+    fn solid_color_at(list: &DisplayList, rect: Rect) -> Option<Color> {
+        list.items().iter().find_map(|item| match *item {
+            DisplayItem::SolidRect { rect: r, color } if r == rect => Some(color),
+            _ => None,
+        })
+    }
+
     #[test]
     fn hover_changes_button_color() {
         let layout = ToolbarLayout::new(800, 1.0);
         let mut plain = DisplayList::new();
-        layout.paint(None, &mut plain);
+        layout.paint(&ToolbarView::default(), &mut plain);
         let mut hovered = DisplayList::new();
-        layout.paint(Some(ToolbarButton::Reload), &mut hovered);
+        layout.paint(
+            &ToolbarView {
+                hovered: Some(ToolbarButton::Reload),
+                ..ToolbarView::default()
+            },
+            &mut hovered,
+        );
         let reload = layout.buttons[2].1;
-        let color_of = |list: &DisplayList| {
-            list.items().iter().find_map(|item| match *item {
-                DisplayItem::SolidRect { rect, color } if rect == reload => Some(color),
-                _ => None,
-            })
-        };
-        assert_eq!(color_of(&plain), Some(BUTTON));
-        assert_eq!(color_of(&hovered), Some(BUTTON_HOVER));
+        assert_eq!(solid_color_at(&plain, reload), Some(BUTTON));
+        assert_eq!(solid_color_at(&hovered, reload), Some(BUTTON_HOVER));
+    }
+
+    #[test]
+    fn loading_bar_and_focus_border() {
+        let layout = ToolbarLayout::new(800, 1.0);
+        let mut list = DisplayList::new();
+        layout.paint(
+            &ToolbarView {
+                loading: true,
+                caret: Some(0),
+                ..ToolbarView::default()
+            },
+            &mut list,
+        );
+        assert!(
+            list.items().iter().any(
+                |i| matches!(i, DisplayItem::SolidRect { color, .. } if *color == LOADING_BAR)
+            )
+        );
+        assert!(list.items().iter().any(
+            |i| matches!(i, DisplayItem::Border { color, .. } if *color == ADDRESS_FOCUS_BORDER)
+        ));
+    }
+
+    #[test]
+    fn ui_text_carets_are_monotonic() {
+        let mut fonts = FontContext::with_system_fonts();
+        if fonts.face_count() == 0 {
+            return;
+        }
+        let t = shape_ui_text(&mut fonts, "https://a.test/", UI_FONT_SIZE);
+        assert!(t.width > 0.0 && !t.runs.is_empty());
+        assert!(t.carets.windows(2).all(|w| w[1].1 >= w[0].1));
+        assert_eq!(t.carets.last().unwrap().0, "https://a.test/".len());
     }
 }

@@ -42,17 +42,19 @@ is still to be built (see [roadmap](roadmap.md)).
 | `crates/css` | `rustlite-css` | CSS tokenizer, rule/declaration parser, selectors + specificity | Implemented (first layer) |
 | `crates/style` | `rustlite-style` | UA sheet, matching, cascade, computed values, serialization | Implemented (first layer) |
 | `crates/fonts` | `rustlite-fonts` | Font discovery, selection, fallback, shaping, metrics, glyph raster | Implemented ([ADR-0002](../research/decisions/ADR-0002-font-stack.md)) |
-| `crates/layout` | `rustlite-layout` | Box tree, block/inline layout, line breaking, paint | Implemented (normal flow) |
+| `crates/layout` | `rustlite-layout` | Box tree, block/inline layout, line breaking, paint, hit testing | Implemented (normal flow) |
+| `crates/net` | `rustlite-net` | HTTP(S) fetch with limits, redirects, charset decoding, background loader | Implemented ([networking.md](networking.md)) |
 
 Planned crates are created when their first real code lands, not as empty
-shells: `net`, `platform`,
+shells: `platform`,
 `js-runtime`, `web-apis`, `storage`. Their responsibilities follow the master
 specification §3.
 
 ### Dependency direction
 
 ```
-desktop ──► browser-core ──► html ──► dom
+desktop ──► browser-core ──► net
+   │              ├──────────► html ──► dom
    │              ├──────────► style ──► css, dom
    │              ├──────────► layout ─► style, fonts, paint, dom
    │              └──────────► fonts ──► paint
@@ -89,11 +91,14 @@ windows.
 | `rustybuzz 0.20` | Shaping (HarfBuzz port) | All | MIT | Pure Rust. |
 | `ttf-parser 0.25` | Font tables, metrics, cmap | All | MIT/Apache-2.0 | Shared by fontdb and rustybuzz. |
 | `image 0.25` (png, jpeg, gif only) | Image decoding | All | MIT/Apache-2.0 | ~0.45 MiB of binary; limits on dimensions and allocation. |
+| `ureq 3.4` (rustls, platform-verifier, gzip) | HTTP/1.1 client | All (ring needs a C compiler) | MIT/Apache-2.0 | Synchronous; run on loader threads. Brings rustls + ring + rustls-platform-verifier |
+| `url 2.5` | WHATWG URL parsing and resolution | All | MIT/Apache-2.0 | |
+| `encoding_rs 0.8` | WHATWG Encoding Standard decoders | All | MIT/Apache-2.0 + WHATWG BSD-3 data | Encoding tables add ~1 MiB of binary |
 
 Deferred until needed: `wgpu` (GPU backend),
 `url`, `rustls`/HTTP client, `image`, `boa_engine`, `rusqlite`, `criterion`,
 `proptest`. Each will be evaluated when its milestone starts.
 
-Release binary (Windows x64, thin LTO, `panic=abort`): **2.5 MiB** (1.06 MiB before fonts/layout).
+Release binary (Windows x64, thin LTO, `panic=abort`): **4.6 MiB** (2.5 MiB before networking).
 Glyph rasterization is RustLite code ([ADR-0003](../research/decisions/ADR-0003-own-glyph-rasterizer.md));
 fontdue was removed.

@@ -33,21 +33,25 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | LIST-001 | `list-style-type`, outside list markers, `<ol start>`, `<li value>` | Tested | `layout` tests (ordinals, counter styles, placement); visual check |
 | IMAGE-001 | Local `<img>` (PNG/JPEG/GIF), presentational hints, replaced sizing, inline/block | Verified on reference browser (fixture set) | 2/2 image fixtures match Chromium 152; [spec](../research/specifications/IMAGE-001.md) |
 | RENDER-006 | Image drawing (bilinear, alpha, clip); dashed/dotted/double borders | Tested | `renderer` + `paint` tests; visual check |
-| NET-001 | HTTP(S) loading | Planned | — |
-| NAV-001 | Navigation state machine | Planned | — |
+| NET-001 | HTTP(S) fetch: TLS (OS trust store), manual redirects with scheme checks, limits, timeouts, cancellation, charset decoding, background loader | Tested | `net` unit + local-server integration tests; badssl.com manual checks ([spec](../research/specifications/NET-001.md)) |
+| NAV-001 | Tab navigation: stale-result protection, history, error pages, URL policy, linked stylesheets and images over HTTP | Tested | `browser-core` navigation tests against a local server |
+| SHELL-002 | Address bar editing, link clicks, back/forward/reload/stop, loading bar | Tested | `address_bar`, `commands`, `toolbar` tests; manual windowed use |
+| CSS-002 | `font` shorthand, `min-/max-width/height`, `light-dark()` | Verified on reference browser (fixture set) | `font-shorthand` style and `min-max-sizes` layout fixtures match Chromium 152 |
 | JS-001 | JS runtime | Deferred (Phase 9) | — |
 
 ## Platform validation
 
 | Platform | Build | Tests | Window | Notes |
 |---|---|---|---|---|
-| Windows 11 x64 (MSVC) | ✅ | ✅ 184/184 | ✅ | Ryzen 5 5600G, Radeon iGPU |
+| Windows 11 x64 (MSVC) | ✅ | ✅ 226/226 | ✅ | Ryzen 5 5600G, Radeon iGPU |
 | Linux x64 | ✅ CI | ✅ CI (run 38864693788) | Unverified | No display in CI; text layout goldens skip (no Times New Roman) |
 | macOS | ✅ CI | ✅ CI (run 38864693788) | Unverified | Layout text goldens pin Times New Roman and skip if its metrics differ from the reference machine |
 
 ## Known limitations
 
-- Images load only from the document's directory (no network or `data:` URLs).
+- Local documents load images/stylesheets only from their own directory; network
+  documents only over http(s). No `data:` URLs, cookies, cache or JavaScript.
+- Single process, no sandbox (see [security.md](security.md)).
 - Layout covers normal flow only: no floats, positioning, flex, grid, tables,
   images or list markers yet (see compatibility.md).
 - CSS gaps (at-rules, `:not()`, `var()`, `calc()`, external sheets) are listed in
@@ -143,3 +147,25 @@ Tested · Verified on reference browser · Blocked · Deferred.
 - **Measurements:** sample page with images: 24.4 MB working set (was 73.6 MB
   with fontdue); binary 2.5 MiB. See [performance.md](performance.md).
 - **Next:** Phase 6 networking.
+
+### 2026-10-16 — Phase 6: networking and navigation
+
+- **What:** `rustlite-net` (ureq + rustls with the OS trust store, manual
+  redirects with per-hop scheme checks, size limits, timeouts, cancellation,
+  encoding_rs charset detection, a 4-thread bounded loader); `Tab` in
+  `browser-core` (navigation state machine with stale-result protection,
+  history, error pages, `file:` only for user-initiated navigations, `<base>`,
+  linked stylesheets in cascade order, images over HTTP); a real address bar,
+  link clicking with a pointer cursor, back/forward/reload/stop and a loading
+  bar in the desktop app; headless rendering of URLs.
+- **Real sites:** example.com renders over HTTPS; expired, self-signed and
+  wrong-host certificates (badssl.com) are refused. Rendering example.com
+  exposed three missing CSS features (`font` shorthand, `max-width`,
+  `light-dark()`), now implemented and verified with Chromium fixtures; the
+  page's paragraph wraps identically to Chromium.
+- **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 226 passed
+  (incl. local HTTP server tests) · release build ✅ · windowed smoke ✅.
+- **Measurements:** example.com in the window: 28.0 MB working set / 12.0 MB
+  private; binary 4.6 MiB (TLS and encodings). See [performance.md](performance.md).
+- **Next:** Phase 7 completion (tabs, history UI) or Phase 8 (benchmarks,
+  incremental invalidation); process isolation design before JavaScript.

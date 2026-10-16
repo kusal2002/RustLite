@@ -175,6 +175,10 @@ pub enum Longhand {
     OverflowY,
     Width,
     Height,
+    MinWidth,
+    MaxWidth,
+    MinHeight,
+    MaxHeight,
     MarginTop,
     MarginRight,
     MarginBottom,
@@ -263,6 +267,8 @@ pub enum Value {
     FontStyle(FontStyle),
     FontFamily(Rc<[FamilyName]>),
     LineHeight(LineHeight),
+    /// `max-width`/`max-height`: `None` is the `none` keyword.
+    MaxSize(Option<LengthPercentage>),
     TextAlign(TextAlign),
     ListStyleType(ListStyleType),
     Overflow(Overflow),
@@ -394,6 +400,71 @@ fn parse_font_family(value: &[ComponentValue]) -> Option<Rc<[FamilyName]>> {
     Some(families.into())
 }
 
+/// `font: [style || weight || variant || stretch]? size [/ line-height]? family`
+/// (CSS Fonts 4 §2.8). Variant and stretch are accepted and ignored; system
+/// font keywords (`caption`, `menu`, ...) are not supported.
+fn parse_font_shorthand(value: &[ComponentValue]) -> Option<Vec<(Longhand, Value)>> {
+    let mut style = FontStyle::Normal;
+    let mut weight = FontWeight::Absolute(400);
+    let mut i = 0;
+    let skip_ws = |i: &mut usize| {
+        while value.get(*i).is_some_and(ComponentValue::is_whitespace) {
+            *i += 1;
+        }
+    };
+    // Prefix keywords, at most one of each kind.
+    let (mut seen_style, mut seen_weight) = (false, false);
+    loop {
+        skip_ws(&mut i);
+        let cv = value.get(i)?;
+        let word = ident_lower(cv).unwrap_or_default();
+        if word == "normal" {
+            i += 1;
+        } else if !seen_style && let Some(s) = FontStyle::from_ident(&word) {
+            style = s;
+            seen_style = true;
+            i += 1;
+        } else if !seen_weight && let Some(w) = parse_font_weight(cv).filter(|_| word != "normal") {
+            weight = w;
+            seen_weight = true;
+            i += 1;
+        } else if matches!(
+            word.as_str(),
+            "small-caps"
+                | "condensed"
+                | "semi-condensed"
+                | "expanded"
+                | "semi-expanded"
+                | "extra-condensed"
+                | "extra-expanded"
+                | "ultra-condensed"
+                | "ultra-expanded"
+        ) {
+            i += 1;
+        } else {
+            break;
+        }
+    }
+    let size = parse_font_size(value.get(i)?)?;
+    i += 1;
+    skip_ws(&mut i);
+    let mut line_height = LineHeight::Normal;
+    if matches!(value.get(i), Some(ComponentValue::Token(Token::Delim('/')))) {
+        i += 1;
+        skip_ws(&mut i);
+        line_height = parse_line_height(value.get(i)?)?;
+        i += 1;
+    }
+    let family = parse_font_family(&value[i..])?;
+    Some(vec![
+        (Longhand::FontStyle, Value::FontStyle(style)),
+        (Longhand::FontWeight, Value::FontWeight(weight)),
+        (Longhand::FontSize, Value::FontSize(size)),
+        (Longhand::LineHeight, Value::LineHeight(line_height)),
+        (Longhand::FontFamily, Value::FontFamily(family)),
+    ])
+}
+
 fn parse_line_height(cv: &ComponentValue) -> Option<LineHeight> {
     match cv {
         ComponentValue::Token(Token::Number { value, .. }) if *value >= 0.0 => {
@@ -431,7 +502,16 @@ fn parse_longhand(property: Longhand, value: &[ComponentValue]) -> Option<Value>
         L::TextAlign => Value::TextAlign(TextAlign::from_ident(ident(cv)?)?),
         L::ListStyleType => Value::ListStyleType(ListStyleType::from_ident(ident(cv)?)?),
         L::OverflowX | L::OverflowY => Value::Overflow(Overflow::from_ident(ident(cv)?)?),
-        L::Width | L::Height => Value::LengthPercentageAuto(parse_lpa(cv, false)?),
+        L::Width | L::Height | L::MinWidth | L::MinHeight => {
+            Value::LengthPercentageAuto(parse_lpa(cv, false)?)
+        }
+        L::MaxWidth | L::MaxHeight => {
+            if ident(cv).is_some_and(|s| s.eq_ignore_ascii_case("none")) {
+                Value::MaxSize(None)
+            } else {
+                Value::MaxSize(Some(parse_length_percentage(cv, false)?))
+            }
+        }
         L::MarginTop | L::MarginRight | L::MarginBottom | L::MarginLeft => {
             Value::LengthPercentageAuto(parse_lpa(cv, true)?)
         }
@@ -465,6 +545,10 @@ fn longhand_by_name(name: &str) -> Option<Longhand> {
         "overflow-y" => L::OverflowY,
         "width" => L::Width,
         "height" => L::Height,
+        "min-width" => L::MinWidth,
+        "max-width" => L::MaxWidth,
+        "min-height" => L::MinHeight,
+        "max-height" => L::MaxHeight,
         "margin-top" => L::MarginTop,
         "margin-right" => L::MarginRight,
         "margin-bottom" => L::MarginBottom,
@@ -642,6 +726,21 @@ pub fn parse_declaration(decl: &Declaration) -> Vec<PropertyDeclaration> {
         }
         // Only the color component of `background` is supported so far; a
         // value with images, positions etc. is dropped rather than half-applied.
+        "font" => match css_wide(value) {
+            Some(w) => Some(
+                [
+                    Longhand::FontStyle,
+                    Longhand::FontWeight,
+                    Longhand::FontSize,
+                    Longhand::LineHeight,
+                    Longhand::FontFamily,
+                ]
+                .into_iter()
+                .map(|l| (l, w.clone()))
+                .collect(),
+            ),
+            None => parse_font_shorthand(value),
+        },
         "background" => css_wide(value)
             .or_else(|| single(value).and_then(parse_color).map(Value::Color))
             .map(|v| vec![(Longhand::BackgroundColor, v)]),
@@ -779,6 +878,72 @@ mod tests {
 
     #[test]
     fn longhand_count() {
-        assert_eq!(LONGHAND_COUNT, 34);
+        assert_eq!(LONGHAND_COUNT, 38);
+    }
+
+    #[test]
+    fn font_shorthand() {
+        let p = props("font: italic bold 16px/1.6 system-ui, sans-serif");
+        assert_eq!(
+            p[0],
+            (Longhand::FontStyle, Value::FontStyle(FontStyle::Italic))
+        );
+        assert_eq!(
+            p[1],
+            (
+                Longhand::FontWeight,
+                Value::FontWeight(FontWeight::Absolute(700))
+            )
+        );
+        assert_eq!(
+            p[3],
+            (
+                Longhand::LineHeight,
+                Value::LineHeight(LineHeight::Number(1.6))
+            )
+        );
+        assert!(matches!(&p[4].1, Value::FontFamily(f) if f.len() == 2));
+        // Unspecified parts reset to their initial values.
+        let q = props("font: 12px serif");
+        assert_eq!(
+            q[0],
+            (Longhand::FontStyle, Value::FontStyle(FontStyle::Normal))
+        );
+        assert_eq!(
+            q[3],
+            (Longhand::LineHeight, Value::LineHeight(LineHeight::Normal))
+        );
+        // Size and family are required.
+        assert_eq!(props("font: bold serif"), []);
+        assert_eq!(props("font: 12px"), []);
+        assert_eq!(props("font: caption"), []);
+    }
+
+    #[test]
+    fn min_max_sizes() {
+        assert_eq!(
+            props("max-width: none"),
+            [(Longhand::MaxWidth, Value::MaxSize(None))]
+        );
+        assert!(matches!(
+            props("max-width: 26em")[0].1,
+            Value::MaxSize(Some(_))
+        ));
+        assert_eq!(props("max-width: -1px"), []);
+        assert!(matches!(
+            props("min-height: 10%")[0].1,
+            Value::LengthPercentageAuto(_)
+        ));
+    }
+
+    #[test]
+    fn light_dark_picks_the_light_color() {
+        assert_eq!(
+            props("background: light-dark(#eee, #222)"),
+            [(
+                Longhand::BackgroundColor,
+                Value::Color(ColorValue::Rgba(Rgba::rgb(0xee, 0xee, 0xee)))
+            )]
+        );
     }
 }

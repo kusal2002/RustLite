@@ -134,38 +134,55 @@ fn layout_block_inner(
 
     // Horizontal: margin-left + border + padding + width + ... = cb_width.
     let frame = b.border.horizontal() + b.padding.horizontal();
-    let (mut ml, mut mr) = (margin(3), margin(1));
     // Replaced elements size from their content, not from the containing block.
     let replaced_size = b
         .replaced
         .as_ref()
         .map(|r| crate::replaced::content_size(&s, r.image.as_deref(), cb_width));
-    let width = match length_auto(s.width, Some(cb_width)).or(replaced_size.map(|r| r.0)) {
-        None => {
-            let w = cb_width - ml.unwrap_or(0.0) - mr.unwrap_or(0.0) - frame;
-            ml.get_or_insert(0.0);
-            mr.get_or_insert(0.0);
-            w.max(0.0)
-        }
-        Some(w) => {
-            let remaining = cb_width - w - frame;
-            match (ml, mr) {
-                (None, None) => {
-                    let half = remaining / 2.0;
-                    if half < 0.0 {
-                        ml = Some(0.0);
-                        mr = Some(remaining);
-                    } else {
-                        ml = Some(half);
-                        mr = Some(half);
-                    }
-                }
-                (None, Some(r)) => ml = Some(remaining - r),
-                (Some(l), _) => mr = Some(remaining - l),
+    // CSS 2.1 §10.3.3 for one candidate width (`None` = auto).
+    let resolve_horizontal = |width: Option<f32>| -> (f32, Option<f32>, Option<f32>) {
+        let (mut ml, mut mr) = (margin(3), margin(1));
+        let w = match width {
+            None => {
+                let w = cb_width - ml.unwrap_or(0.0) - mr.unwrap_or(0.0) - frame;
+                ml.get_or_insert(0.0);
+                mr.get_or_insert(0.0);
+                w.max(0.0)
             }
-            w
-        }
+            Some(w) => {
+                let remaining = cb_width - w - frame;
+                match (ml, mr) {
+                    (None, None) => {
+                        let half = remaining / 2.0;
+                        if half < 0.0 {
+                            ml = Some(0.0);
+                            mr = Some(remaining);
+                        } else {
+                            ml = Some(half);
+                            mr = Some(half);
+                        }
+                    }
+                    (None, Some(r)) => ml = Some(remaining - r),
+                    (Some(l), _) => mr = Some(remaining - l),
+                }
+                w
+            }
+        };
+        (w, ml, mr)
     };
+    let mut horizontal =
+        resolve_horizontal(length_auto(s.width, Some(cb_width)).or(replaced_size.map(|r| r.0)));
+    // CSS 2.1 §10.4: clamp to max-width, then min-width, re-solving margins.
+    if let Some(max) = s.max_width.map(|m| length(m, cb_width))
+        && horizontal.0 > max
+    {
+        horizontal = resolve_horizontal(Some(max));
+    }
+    let min_width = length_auto(s.min_width, Some(cb_width)).unwrap_or(0.0);
+    if horizontal.0 < min_width {
+        horizontal = resolve_horizontal(Some(min_width));
+    }
+    let (width, ml, mr) = horizontal;
     b.margin = Edges {
         top: margin(0).unwrap_or(0.0),
         right: mr.unwrap_or(0.0),
@@ -256,7 +273,18 @@ fn layout_block_inner(
         marker.runs = runs;
     }
 
-    let height = specified_height.unwrap_or(content_height).max(0.0);
+    // CSS 2.1 §10.7: max-height, then min-height (percentages need a definite
+    // containing block height, else they do not apply).
+    let mut height = specified_height.unwrap_or(content_height).max(0.0);
+    if let Some(max) = s.max_height.and_then(|m| match m {
+        ComputedLength::Px(v) => Some(v),
+        ComputedLength::Percentage(p) => cb_height.map(|h| h * p / 100.0),
+    }) {
+        height = height.min(max);
+    }
+    if let Some(min) = length_auto(s.min_height, cb_height) {
+        height = height.max(min);
+    }
     // A box with a non-zero height cannot have margins collapsing through it.
     let through = through && height == 0.0;
     b.rect.height = height + b.border.vertical() + b.padding.vertical();

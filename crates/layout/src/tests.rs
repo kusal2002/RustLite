@@ -299,3 +299,53 @@ fn marker_sits_left_of_content_on_first_baseline() {
     }
     panic!("no marker found");
 }
+
+#[test]
+fn hit_testing_finds_innermost_element() {
+    let Some(mut f) = fonts() else { return };
+    let l = lay_out_with(
+        &format!(
+            "{RESET}<div id=outer style='padding: 20px'><p id=p style='margin:0'>plain <a id=link href=x><b id=bold>bold link</b></a></p></div><div id=below style='height: 50px'></div>"
+        ),
+        &mut f,
+    );
+    let id_of = |n: Option<rustlite_dom::NodeId>| {
+        n.and_then(|n| l.doc.attribute(n, "id")).map(str::to_owned)
+    };
+    let bold = l.rect("bold");
+    assert_eq!(
+        id_of(hit_test(&l.tree, bold.x + 2.0, bold.y + 2.0)).as_deref(),
+        Some("bold")
+    );
+    // Text directly in the paragraph hits the paragraph.
+    let p = l.rect("p");
+    assert_eq!(
+        id_of(hit_test(&l.tree, p.x + 2.0, p.y + 2.0)).as_deref(),
+        Some("p")
+    );
+    // Padding area hits the outer block.
+    assert_eq!(id_of(hit_test(&l.tree, 5.0, 5.0)).as_deref(), Some("outer"));
+    let below = l.rect("below");
+    assert_eq!(
+        id_of(hit_test(&l.tree, 10.0, below.y + 10.0)).as_deref(),
+        Some("below")
+    );
+}
+
+#[test]
+fn min_and_max_sizes_clamp_blocks() {
+    let l = lay_out(&format!(
+        "{RESET}<div id=a style='max-width: 300px; margin: 0 auto; height: 10px'></div>\
+         <div id=b style='width: 50px; min-width: 120px; height: 10px'></div>\
+         <div id=c style='height: 500px; max-height: 40px'></div>\
+         <div id=d style='min-height: 25px'></div>"
+    ));
+    assert_eq!(
+        l.rect("a"),
+        r(250.0, 0.0, 300.0, 10.0),
+        "max-width with auto margins centers"
+    );
+    assert_eq!(l.rect("b").width, 120.0);
+    assert_eq!(l.rect("c").height, 40.0);
+    assert_eq!(l.rect("d").height, 25.0);
+}

@@ -8,6 +8,7 @@ images-block CSS1Compat
 images-inline CSS1Compat
 inline-elements CSS1Compat
 margin-collapsing CSS1Compat
+min-max-sizes CSS1Compat
 text-lines CSS1Compat
 text-wrapping CSS1Compat
 whitespace CSS1Compat

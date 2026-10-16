@@ -46,6 +46,11 @@ pub struct ComputedStyle {
     pub overflow_x: Overflow,
     pub overflow_y: Overflow,
     pub width: ComputedLengthAuto,
+    /// `auto` behaves as 0 for the block layouts RustLite implements.
+    pub min_width: ComputedLengthAuto,
+    pub max_width: Option<ComputedLength>,
+    pub min_height: ComputedLengthAuto,
+    pub max_height: Option<ComputedLength>,
     pub height: ComputedLengthAuto,
     /// Top, right, bottom, left.
     pub margin: [ComputedLengthAuto; 4],
@@ -85,6 +90,10 @@ impl ComputedStyle {
             overflow_x: Overflow::Visible,
             overflow_y: Overflow::Visible,
             width: ComputedLengthAuto::Auto,
+            min_width: ComputedLengthAuto::Auto,
+            max_width: None,
+            min_height: ComputedLengthAuto::Auto,
+            max_height: None,
             height: ComputedLengthAuto::Auto,
             margin: [ComputedLengthAuto::Length(zero); 4],
             padding: [zero; 4],
@@ -315,6 +324,23 @@ pub fn compute(
         };
     style.width = lpa(Longhand::Width, parent_or_initial.width, initial.width);
     style.height = lpa(Longhand::Height, parent_or_initial.height, initial.height);
+    style.min_width = lpa(
+        Longhand::MinWidth,
+        parent_or_initial.min_width,
+        initial.min_width,
+    );
+    style.min_height = lpa(
+        Longhand::MinHeight,
+        parent_or_initial.min_height,
+        initial.min_height,
+    );
+    let max = |prop: Longhand, inherited: Option<ComputedLength>| match get(prop) {
+        Resolved::Inherit => inherited,
+        Resolved::Specified(Value::MaxSize(Some(v))) => Some(compute_lp(*v, fs, ctx)),
+        _ => None,
+    };
+    style.max_width = max(Longhand::MaxWidth, parent_or_initial.max_width);
+    style.max_height = max(Longhand::MaxHeight, parent_or_initial.max_height);
 
     const MARGINS: [Longhand; 4] = [
         Longhand::MarginTop,

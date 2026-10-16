@@ -3,10 +3,13 @@
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::sync::mpsc::channel;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use rustlite_browser_core::{Content, Page};
+use rustlite_browser_core::{Content, NavState, Page, Tab};
 use rustlite_diagnostics::{FrameStats, FrameSummary};
+use rustlite_net::{FetchConfig, LoadResult, Loader};
 use rustlite_paint::DisplayList;
 use rustlite_renderer::{CanvasError, Framebuffer, PngError, encode_png, rasterize};
 use winit::application::ApplicationHandler;
@@ -15,9 +18,12 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
 
 use crate::browser_window::{BrowserWindow, Flow, WindowError};
-use crate::frame::{self, ChromeState, WINDOW_BACKGROUND};
+use crate::frame::{self, WINDOW_BACKGROUND};
 use crate::options::Options;
-use crate::toolbar::ToolbarLayout;
+use crate::toolbar::{ToolbarLayout, ToolbarView, UI_FONT_SIZE, shape_ui_text};
+
+/// Network worker threads per process.
+const LOADER_THREADS: usize = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -43,6 +49,13 @@ pub enum AppError {
     },
 }
 
+/// Events delivered to the UI thread from elsewhere.
+#[derive(Debug)]
+pub enum AppEvent {
+    /// A network load finished on a loader thread.
+    Load(LoadResult),
+}
+
 /// Result of a windowed run, for logging and smoke tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RunReport {
@@ -51,8 +64,7 @@ pub struct RunReport {
 
 struct App {
     options: Options,
-    /// (url, source) of the file to open in the first window.
-    initial: Option<LocalDocument>,
+    loader: Option<Arc<Loader>>,
     window: Option<BrowserWindow>,
     final_stats: Option<FrameStats>,
     error: Option<AppError>,
@@ -73,20 +85,36 @@ impl App {
     }
 }
 
-impl ApplicationHandler for App {
+impl ApplicationHandler<AppEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
         }
+        let initial = self
+            .options
+            .open
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned());
         match BrowserWindow::new(
             event_loop,
             self.options.size,
             self.options.debug_overlay,
             self.options.exit_after_frames,
-            self.initial.take(),
+            self.loader.clone(),
+            initial,
         ) {
             Ok(window) => self.window = Some(window),
             Err(e) => self.fail(event_loop, e.into()),
+        }
+    }
+
+    fn user_event(&mut self, _: &ActiveEventLoop, event: AppEvent) {
+        match event {
+            AppEvent::Load(result) => {
+                if let Some(window) = self.window.as_mut() {
+                    window.on_load_result(result);
+                }
+            }
         }
     }
 
@@ -104,14 +132,24 @@ impl ApplicationHandler for App {
 
 /// Opens the browser window and runs until it is closed.
 pub fn run(options: Options) -> Result<RunReport, AppError> {
-    // Read the file before opening a window so a bad path fails fast.
-    let initial = options.open.as_deref().map(read_local_html).transpose()?;
-    let event_loop = EventLoop::new()?;
-    // Sleep until the OS delivers events; redraws are requested only on change.
+    let event_loop = EventLoop::<AppEvent>::with_user_event().build()?;
+    // Sleep until the OS (or a loader thread) delivers events; redraws are
+    // requested only on change.
     event_loop.set_control_flow(ControlFlow::Wait);
+    let proxy = Mutex::new(event_loop.create_proxy());
+    let loader = Loader::new(
+        LOADER_THREADS,
+        &FetchConfig::default(),
+        Arc::new(move |result| {
+            if let Ok(proxy) = proxy.lock() {
+                // Fails only after the event loop has exited; nothing to do then.
+                let _ = proxy.send_event(AppEvent::Load(result));
+            }
+        }),
+    );
     let mut app = App {
         options,
-        initial,
+        loader: Some(Arc::new(loader)),
         window: None,
         final_stats: None,
         error: None,
@@ -141,29 +179,78 @@ pub struct HeadlessReport {
     pub raster_time: Duration,
 }
 
+/// How long headless rendering waits for a page and its subresources.
+const HEADLESS_LOAD_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// Renders one frame at `options.size` (scale factor 1.0) without a window and
-/// writes it to `path` as PNG. Renders `options.open` if given.
+/// writes it to `path` as PNG. Loads `options.open` (a file path or URL) first,
+/// waiting for the document and its subresources.
 pub fn render_headless(options: &Options, path: &Path) -> Result<HeadlessReport, AppError> {
     let size = options.size;
     let toolbar = ToolbarLayout::new(size.width, 1.0);
-    let mut page = Page::new(frame::content_size(size, &toolbar));
-    if let Some(file) = &options.open {
-        read_local_html(file)?.load_into(&mut page);
+    let page = Page::new(frame::content_size(size, &toolbar));
+    let (tx, rx) = channel();
+    let tx = Mutex::new(tx);
+    let loader = Loader::new(
+        LOADER_THREADS,
+        &FetchConfig::default(),
+        Arc::new(move |r| {
+            if let Ok(tx) = tx.lock() {
+                let _ = tx.send(r);
+            }
+        }),
+    );
+    let mut tab = Tab::new(page, Some(Arc::new(loader)));
+    if let Some(input) = &options.open {
+        if let Err(e) = tab.navigate(&input.to_string_lossy()) {
+            tracing::warn!(error = %e, "navigation rejected");
+        }
+        let deadline = Instant::now() + HEADLESS_LOAD_TIMEOUT;
+        while (tab.state() != NavState::Idle || tab.pending_subresources() > 0)
+            && Instant::now() < deadline
+        {
+            if let Ok(r) = rx.recv_timeout(Duration::from_millis(50)) {
+                tab.on_load_result(r);
+            }
+        }
+        if tab.state() != NavState::Idle {
+            tracing::warn!("page still loading at the headless deadline; rendering what arrived");
+        }
     }
-    let mut list = DisplayList::new();
-    let chrome = ChromeState {
-        debug_overlay: options.debug_overlay,
-        ..ChromeState::default()
+
+    let url = tab
+        .url()
+        .map(|u| u.to_string())
+        .filter(|u| u != "about:blank")
+        .unwrap_or_default();
+    let fonts = tab.page_mut().fonts();
+    let view = ToolbarView {
+        can_back: false,
+        address: shape_ui_text(fonts, &url, UI_FONT_SIZE),
+        icons: [
+            shape_ui_text(fonts, "\u{2190}", UI_FONT_SIZE + 2.0),
+            shape_ui_text(fonts, "\u{2192}", UI_FONT_SIZE + 2.0),
+            shape_ui_text(fonts, "\u{21BB}", UI_FONT_SIZE + 2.0),
+        ],
+        ..ToolbarView::default()
     };
 
+    let mut list = DisplayList::new();
     let start = Instant::now();
-    frame::compose(&mut list, size, &toolbar, &mut page, chrome);
+    frame::compose(
+        &mut list,
+        size,
+        &toolbar,
+        &view,
+        tab.page_mut(),
+        options.debug_overlay,
+    );
     let mut fb = Framebuffer::new(size.width, size.height)?;
     rasterize(
         &mut fb.canvas(),
         &list,
         WINDOW_BACKGROUND,
-        page.glyph_rasterizer(),
+        tab.page_mut().glyph_rasterizer(),
     );
     let raster_time = start.elapsed();
 
@@ -192,7 +279,7 @@ fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
 }
 
-/// Largest local HTML file `--dump-dom` will read.
+/// Largest local HTML file the `--dump-*` options will read.
 const MAX_DUMP_INPUT: u64 = 64 * 1024 * 1024;
 
 /// Parses a local HTML file (named explicitly on the command line) and returns
@@ -229,33 +316,9 @@ pub fn dump_layout(path: &Path, viewport: rustlite_paint::Size) -> Result<String
     Ok(rustlite_layout::dump_geometry(dom, tree))
 }
 
-/// Reads a local HTML file named explicitly on the command line into a page.
+/// Reads a local HTML file named explicitly on the command line into a page,
+/// with its stylesheets and images (same directory policy as navigation).
 fn load_local_file(path: &Path, viewport: rustlite_paint::Size) -> Result<Page, AppError> {
-    let mut page = Page::new(viewport);
-    read_local_html(path)?.load_into(&mut page);
-    Ok(page)
-}
-
-/// A local HTML file named explicitly by the user, read into memory.
-#[derive(Debug)]
-pub struct LocalDocument {
-    pub url: String,
-    pub source: String,
-    /// Directory images may be loaded from (see `browser_core::images`).
-    pub base_dir: Option<std::path::PathBuf>,
-}
-
-impl LocalDocument {
-    pub fn load_into(&self, page: &mut Page) {
-        page.load_html_with_base(self.url.clone(), &self.source, self.base_dir.as_deref());
-    }
-}
-
-/// Reads a local HTML file named explicitly by the user.
-///
-/// This is not navigation: pages cannot cause local files to be read; they
-/// can only load images from inside this file's directory.
-fn read_local_html(path: &Path) -> Result<LocalDocument, AppError> {
     let display = path.display().to_string();
     let input_error = |source| AppError::Input {
         path: display.clone(),
@@ -270,15 +333,11 @@ fn read_local_html(path: &Path) -> Result<LocalDocument, AppError> {
         });
     }
     let bytes = std::fs::read(path).map_err(input_error)?;
-    // Encoding sniffing arrives with networking; until then input is UTF-8,
-    // with invalid sequences replaced (as a UTF-8 decoder in a browser would).
-    let source = String::from_utf8_lossy(&bytes).into_owned();
+    let source = rustlite_net::decode_html(&bytes, None).text;
     let base_dir = std::fs::canonicalize(path)
         .ok()
         .and_then(|p| p.parent().map(Path::to_path_buf));
-    Ok(LocalDocument {
-        url: format!("file:{display}"),
-        source,
-        base_dir,
-    })
+    let mut page = Page::new(viewport);
+    page.load_html_with_base(format!("file:{display}"), &source, base_dir.as_deref());
+    Ok(page)
 }

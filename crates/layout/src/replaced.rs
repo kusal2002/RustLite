@@ -22,14 +22,49 @@ pub(crate) fn content_size(
     let width = resolve(style.width, Some(cb_width));
     let height = resolve(style.height, None);
     let intrinsic = image.map(|i| (i.width as f32, i.height as f32));
-    match (width, height, intrinsic) {
+    let (mut w, mut h) = match (width, height, intrinsic) {
         (Some(w), Some(h), _) => (w, h),
         (Some(w), None, Some((iw, ih))) if iw > 0.0 => (w, w * ih / iw),
         (None, Some(h), Some((iw, ih))) if ih > 0.0 => (h * iw / ih, h),
         (None, None, Some(size)) => size,
         // No intrinsic size (missing or broken image): unspecified sides are 0.
         (w, h, _) => (w.unwrap_or(0.0), h.unwrap_or(0.0)),
+    };
+
+    // Min/max constraints (CSS 2.1 §10.4 and its table for replaced
+    // elements, simplified): when a dimension is not specified, the
+    // intrinsic ratio is kept while clamping the other.
+    let ratio = intrinsic
+        .filter(|(iw, ih)| *iw > 0.0 && *ih > 0.0)
+        .map(|(iw, ih)| iw / ih);
+    let keep_ratio = ratio.filter(|_| width.is_none() || height.is_none());
+    let max_w = style.max_width.map(|m| match m {
+        ComputedLength::Px(v) => v,
+        ComputedLength::Percentage(p) => cb_width * p / 100.0,
+    });
+    let max_h = style.max_height.and_then(|m| match m {
+        ComputedLength::Px(v) => Some(v),
+        ComputedLength::Percentage(_) => None,
+    });
+    let min_w = resolve(style.min_width, Some(cb_width)).unwrap_or(0.0);
+    let min_h = resolve(style.min_height, None).unwrap_or(0.0);
+    let clamp_w = |w: f32| max_w.map_or(w, |m| w.min(m)).max(min_w);
+    let clamp_h = |h: f32| max_h.map_or(h, |m| h.min(m)).max(min_h);
+    let new_w = clamp_w(w);
+    if new_w != w {
+        if let Some(r) = keep_ratio {
+            h = new_w / r;
+        }
+        w = new_w;
     }
+    let new_h = clamp_h(h);
+    if new_h != h {
+        if let Some(r) = keep_ratio {
+            w = new_h * r;
+        }
+        h = new_h;
+    }
+    (w, h)
 }
 
 #[cfg(test)]
@@ -89,5 +124,23 @@ mod tests {
             content_size(&style(px(30.0), A::Auto), None, 500.0),
             (30.0, 0.0)
         );
+    }
+
+    #[test]
+    fn max_width_keeps_ratio_when_height_is_auto() {
+        let i = img(400, 200);
+        let s = ComputedStyle {
+            max_width: Some(ComputedLength::Percentage(100.0)),
+            ..ComputedStyle::initial()
+        };
+        assert_eq!(content_size(&s, Some(&i), 100.0), (100.0, 50.0));
+        // Explicit sizes clamp independently.
+        let s = ComputedStyle {
+            width: px(300.0),
+            height: px(30.0),
+            max_width: Some(ComputedLength::Px(200.0)),
+            ..ComputedStyle::initial()
+        };
+        assert_eq!(content_size(&s, Some(&i), 1000.0), (200.0, 30.0));
     }
 }

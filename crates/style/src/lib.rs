@@ -28,6 +28,7 @@ pub mod values;
 pub use computed::{ComputedLength, ComputedLengthAuto, ComputedLineHeight, ComputedStyle};
 pub use serialize::{DEFAULT_DUMP_PROPERTIES, dump_styles, resolved_value};
 pub use stylist::{
-    ComputedStyles, Origin, SheetStats, StyleStats, Stylist, compute_styles, stylist_for,
+    ComputedStyles, Origin, SheetStats, StyleStats, Stylist, compute_styles, is_stylesheet_link,
+    stylist_for, stylist_with_external,
 };
 pub use values::Rgba;

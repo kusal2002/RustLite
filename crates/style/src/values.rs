@@ -176,6 +176,18 @@ pub(crate) fn parse_color(cv: &ComponentValue) -> Option<ColorValue> {
         ComponentValue::Token(Token::Hash { value, .. }) => parse_hex(value).map(ColorValue::Rgba),
         ComponentValue::Function { name, args } => match name.to_ascii_lowercase().as_str() {
             "rgb" | "rgba" => parse_rgb_function(args),
+            // Only the light color scheme exists, so `light-dark()` picks its
+            // first argument.
+            "light-dark" => {
+                let first: Vec<ComponentValue> = args
+                    .split(|cv| matches!(cv, ComponentValue::Token(Token::Comma)))
+                    .next()?
+                    .to_vec();
+                match parse_color(single(&first)?)? {
+                    ColorValue::Rgba(c) => Some(c),
+                    ColorValue::CurrentColor => None,
+                }
+            }
             "hsl" | "hsla" => parse_hsl_function(args),
             _ => None,
         }

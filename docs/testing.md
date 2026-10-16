@@ -31,6 +31,13 @@ Both run: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- 
 | Screenshot | `rustlite --headless out.png` | Deterministic CPU raster; golden images from Phase 5 |
 | Differential | REA + Chrome | See [rea-workflow.md](rea-workflow.md) |
 
+## Network tests
+
+`crates/net/tests/fetch.rs` and `crates/browser-core/tests/navigation.rs` start
+a local HTTP server on `127.0.0.1` inside the test process; CI needs no
+external network. Certificate validation was checked manually against
+badssl.com (see NET-001); an offline TLS test with a test CA is a gap.
+
 ## Windowed smoke test
 
 ```bash

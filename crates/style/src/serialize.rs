@@ -129,6 +129,12 @@ pub fn resolved_value(style: &ComputedStyle, property: &str) -> Option<String> {
         "overflow-y" => style.overflow_y.as_css().into(),
         "width" => length_auto(style.width),
         "height" => length_auto(style.height),
+        // `auto` resolves to 0 for boxes that are not flex or grid items,
+        // which is every box RustLite lays out today.
+        "min-width" => length_auto(style.min_width).replace("auto", "0px"),
+        "min-height" => length_auto(style.min_height).replace("auto", "0px"),
+        "max-width" => style.max_width.map_or("none".into(), length),
+        "max-height" => style.max_height.map_or("none".into(), length),
         _ => {
             if let Some(s) = property.strip_prefix("margin-") {
                 length_auto(style.margin[side(s)?])

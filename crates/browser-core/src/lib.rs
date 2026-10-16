@@ -1,17 +1,26 @@
 //! Coordinates the page pipeline: document → style → layout → display list.
 //!
-//! Current scope (Phase 4): a page shows either `about:blank` or an HTML
-//! document parsed by `rustlite-html`, styled by `rustlite-style`, laid out
-//! and painted by `rustlite-layout`. Each stage is computed lazily and cached;
-//! a viewport change invalidates styles (viewport units) and layout, a scroll
-//! only repaints.
+//! A [`Page`] shows either `about:blank` or an HTML document parsed by
+//! `rustlite-html`, styled by `rustlite-style`, laid out and painted by
+//! `rustlite-layout`. Each stage is computed lazily and cached; a viewport
+//! change invalidates styles (viewport units) and layout, a scroll only
+//! repaints. A [`Tab`] adds navigation: network loads, history, subresources
+//! and error pages.
 
 pub mod images;
+mod tab;
 
-use rustlite_dom::Document;
+pub use tab::{Initiator, NavState, NavigationError, Tab, error_page_html, parse_user_input};
+
+use std::collections::HashMap;
+use std::rc::Rc;
+
+use rustlite_css::Stylesheet;
+use rustlite_dom::{Document, NodeId};
 use rustlite_fonts::FontContext;
 use rustlite_layout::Images;
 use rustlite_layout::LayoutTree;
+use rustlite_net::{Destination, Url};
 use rustlite_paint::{Color, DisplayList, GlyphRasterizer, NoGlyphs, Rect, Size};
 use rustlite_style::{ComputedStyles, Stylist};
 
@@ -25,6 +34,10 @@ pub struct HtmlDocument {
     pub stylist: Stylist,
     /// Decoded `<img>` resources.
     pub images: Images,
+    /// Base URL for relative references (document URL or `<base href>`).
+    pub base_url: Option<Url>,
+    /// Loaded `<link rel=stylesheet>` sheets, by link element.
+    external_sheets: HashMap<NodeId, Stylesheet>,
     styles: Option<ComputedStyles>,
     layout: Option<LayoutTree>,
 }
@@ -243,7 +256,13 @@ impl Page {
             parse_ms = start.elapsed().as_secs_f64() * 1000.0,
             "HTML document parsed"
         );
-        let stylist = rustlite_style::stylist_for(&out.document);
+        let base_url = base_url_for(&out.document, Url::parse(&url).ok());
+        let external_sheets = match base_dir {
+            Some(dir) => load_local_stylesheets(&out.document, dir),
+            None => HashMap::new(),
+        };
+        let stylist =
+            rustlite_style::stylist_with_external(&out.document, |n| external_sheets.get(&n));
         let images = match base_dir {
             Some(dir) => {
                 let start = std::time::Instant::now();
@@ -263,11 +282,105 @@ impl Page {
             parse_errors: out.error_count,
             stylist,
             images,
+            base_url,
+            external_sheets,
             styles: None,
             layout: None,
         }));
         self.scroll_y = 0.0;
         self.paint_dirty = true;
+    }
+
+    /// The document's base URL, if it has one.
+    pub fn base_url(&self) -> Option<&Url> {
+        match &self.content {
+            Content::Html(doc) => doc.base_url.as_ref(),
+            Content::Blank => None,
+        }
+    }
+
+    /// Network subresources the document needs: linked stylesheets and
+    /// images, resolved against the base URL (http/https only), with the
+    /// element(s) each one is for. Already-loaded resources are skipped.
+    pub fn subresource_requests(&self) -> Vec<(Destination, Url, Vec<NodeId>)> {
+        let Content::Html(doc) = &self.content else {
+            return Vec::new();
+        };
+        let Some(base) = &doc.base_url else {
+            return Vec::new();
+        };
+        let dom = &doc.dom;
+        let mut out: Vec<(Destination, Url, Vec<NodeId>)> = Vec::new();
+        let mut add = |dest: Destination, href: &str, node: NodeId| {
+            let Ok(url) = base.join(href.trim()) else {
+                return;
+            };
+            if !matches!(url.scheme(), "http" | "https") {
+                return;
+            }
+            match out.iter_mut().find(|(d, u, _)| *d == dest && *u == url) {
+                Some((_, _, nodes)) => nodes.push(node),
+                None => out.push((dest, url, vec![node])),
+            }
+        };
+        for n in dom.descendants(dom.root()) {
+            let wanted = if rustlite_style::is_stylesheet_link(dom, n) {
+                (!doc.external_sheets.contains_key(&n))
+                    .then(|| dom.attribute(n, "href").map(|h| (Destination::Style, h)))
+                    .flatten()
+            } else if dom.is_element_named(n, "img") {
+                (!doc.images.contains_key(&n))
+                    .then(|| dom.attribute(n, "src").map(|s| (Destination::Image, s)))
+                    .flatten()
+            } else {
+                None
+            };
+            if let Some((destination, reference)) = wanted {
+                add(destination, reference, n);
+            }
+        }
+        out
+    }
+
+    /// Applies a loaded stylesheet for `<link>` element `node`: rebuilds the
+    /// cascade in document order and invalidates styles.
+    pub fn set_external_stylesheet(&mut self, node: NodeId, css: &str) {
+        let Content::Html(doc) = &mut self.content else {
+            return;
+        };
+        doc.external_sheets
+            .insert(node, rustlite_css::parse_stylesheet(css));
+        let sheets = &doc.external_sheets;
+        doc.stylist = rustlite_style::stylist_with_external(&doc.dom, |n| sheets.get(&n));
+        doc.styles = None;
+        doc.layout = None;
+        self.paint_dirty = true;
+    }
+
+    /// Supplies a decoded image for `<img>` element `node`; invalidates layout.
+    pub fn set_image(&mut self, node: NodeId, image: Rc<rustlite_paint::ImageData>) {
+        let Content::Html(doc) = &mut self.content else {
+            return;
+        };
+        doc.images.insert(node, image);
+        doc.layout = None;
+        self.paint_dirty = true;
+    }
+
+    /// The link (`<a href>` / `<area href>`) under a point of the page
+    /// viewport in device px, resolved against the base URL.
+    pub fn link_at(&mut self, x: f32, y: f32) -> Option<Url> {
+        let (scale, scroll) = (self.device_scale, self.scroll_y);
+        let (dom, tree) = self.layout()?;
+        let node = rustlite_layout::hit_test(tree, x / scale, y / scale + scroll)?;
+        let anchor = std::iter::once(node)
+            .chain(dom.ancestors(node))
+            .find(|&n| {
+                matches!(dom.tag_name(n), Some("a" | "area")) && dom.attribute(n, "href").is_some()
+            })?;
+        let href = dom.attribute(anchor, "href")?.trim().to_owned();
+        let base = self.base_url()?.clone();
+        base.join(&href).ok()
     }
 
     /// The document title per HTML §4.2.2: the first `<title>` element's text
@@ -364,6 +477,56 @@ impl Page {
             None => &mut self.no_glyphs,
         }
     }
+
+    /// The page's font context (created on first use). Browser UI text
+    /// shares it so one glyph cache serves the whole window.
+    pub fn fonts(&mut self) -> &mut FontContext {
+        self.fonts
+            .get_or_insert_with(FontContext::with_system_fonts)
+    }
+}
+
+/// The document's base URL: the first `<base href>` resolved against the
+/// document URL, else the document URL (HTML §2.4.1, simplified).
+fn base_url_for(dom: &Document, document_url: Option<Url>) -> Option<Url> {
+    let base_href = dom
+        .descendants(dom.root())
+        .find(|&n| dom.is_element_named(n, "base") && dom.attribute(n, "href").is_some())
+        .and_then(|n| dom.attribute(n, "href"));
+    match (base_href, &document_url) {
+        (Some(href), Some(doc_url)) => doc_url.join(href.trim()).ok().or(document_url),
+        _ => document_url,
+    }
+}
+
+/// Reads `<link rel=stylesheet>` files for a local document, under the same
+/// directory policy as images.
+fn load_local_stylesheets(
+    dom: &Document,
+    base_dir: &std::path::Path,
+) -> HashMap<NodeId, Stylesheet> {
+    const MAX_CSS_BYTES: u64 = 4 * 1024 * 1024;
+    let mut sheets = HashMap::new();
+    for n in dom.descendants(dom.root()) {
+        if !rustlite_style::is_stylesheet_link(dom, n) {
+            continue;
+        }
+        let Some(href) = dom.attribute(n, "href") else {
+            continue;
+        };
+        let loaded = images::resolve_local(base_dir, href).ok().and_then(|path| {
+            let size = std::fs::metadata(&path).ok()?.len();
+            (size <= MAX_CSS_BYTES).then(|| std::fs::read(&path).ok())?
+        });
+        match loaded {
+            Some(bytes) => {
+                let css = rustlite_net::decode_text(&bytes, None).text;
+                sheets.insert(n, rustlite_css::parse_stylesheet(&css));
+            }
+            None => tracing::warn!(href, "stylesheet not loaded"),
+        }
+    }
+    sheets
 }
 
 #[cfg(test)]

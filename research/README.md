@@ -39,3 +39,4 @@ Review every capture for credentials, tokens and personal data before committing
 - [CSS-001](specifications/CSS-001.md) — CSS parsing, cascade, computed values; 11/11 fixtures match Chromium 152.
 - [LAYOUT-001](specifications/LAYOUT-001.md) — Block and inline layout; 9/9 fixtures within 0.032px of Chromium 152.
 - [IMAGE-001](specifications/IMAGE-001.md) — Images and replaced sizing; 2/2 fixtures match Chromium 152.
+- [NET-001](specifications/NET-001.md) — HTTP(S), navigation, subresources; local-server tests, example.com, badssl.com.

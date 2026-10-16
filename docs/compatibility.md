@@ -133,4 +133,20 @@ grayscale glyph rasterization without hinting by RustLite's own on-demand
 rasterizer ([ADR-0003](../research/decisions/ADR-0003-own-glyph-rasterizer.md);
 text looks softer than Chromium's). No `@font-face`, no color emoji tables.
 
-Networking and JavaScript are not implemented yet.
+### Networking (NET-001)
+
+HTTP/1.1 and HTTPS (TLS 1.2/1.3 via rustls, OS trust store), gzip, redirects
+(10 hops), charset detection (BOM, HTTP, `<meta>`, UTF-8, windows-1252),
+`<base href>`, linked stylesheets, images over HTTP, error pages. See
+[networking.md](networking.md) for limits and gaps (no cache, cookies, CORS,
+HTTP/2, `data:` URLs, downloads, forms).
+
+### CSS additions (CSS-002)
+
+`font` shorthand (style/weight/size/line-height/family; variant and stretch
+accepted and ignored; system fonts unsupported), `min-width`, `max-width`,
+`min-height`, `max-height` (blocks and replaced elements), `light-dark()`
+(light scheme only).
+
+JavaScript is not implemented yet: pages that build content with scripts
+render only their static HTML.

@@ -8,12 +8,15 @@ publish.workspace = true
 
 [dependencies]
 image.workspace = true
+rustlite-css.workspace = true
 rustlite-dom.workspace = true
 rustlite-fonts.workspace = true
 rustlite-html.workspace = true
 rustlite-layout.workspace = true
+rustlite-net.workspace = true
 rustlite-paint.workspace = true
 rustlite-style.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 
 [lints]
