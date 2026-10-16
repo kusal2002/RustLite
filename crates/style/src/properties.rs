@@ -121,6 +121,101 @@ keyword_enum!(Overflow {
     Auto = "auto",
 });
 
+keyword_enum!(Position {
+    Static = "static",
+    Relative = "relative",
+    Absolute = "absolute",
+    Fixed = "fixed",
+    Sticky = "sticky",
+});
+
+keyword_enum!(Float {
+    None = "none",
+    Left = "left",
+    Right = "right",
+});
+
+keyword_enum!(Clear {
+    None = "none",
+    Left = "left",
+    Right = "right",
+    Both = "both",
+});
+
+keyword_enum!(BoxSizing {
+    ContentBox = "content-box",
+    BorderBox = "border-box",
+});
+
+keyword_enum!(FlexDirection {
+    Row = "row",
+    RowReverse = "row-reverse",
+    Column = "column",
+    ColumnReverse = "column-reverse",
+});
+
+keyword_enum!(FlexWrap {
+    Nowrap = "nowrap",
+    Wrap = "wrap",
+    WrapReverse = "wrap-reverse",
+});
+
+keyword_enum!(
+    /// Box Alignment keywords for `justify-content`, `align-items`,
+    /// `align-self` and `align-content` (the subset flex layout uses).
+    Align {
+        Auto = "auto",
+        Normal = "normal",
+        Stretch = "stretch",
+        FlexStart = "flex-start",
+        FlexEnd = "flex-end",
+        Start = "start",
+        End = "end",
+        SelfStart = "self-start",
+        SelfEnd = "self-end",
+        Left = "left",
+        Right = "right",
+        Center = "center",
+        Baseline = "baseline",
+        SpaceBetween = "space-between",
+        SpaceAround = "space-around",
+        SpaceEvenly = "space-evenly",
+    }
+);
+
+impl Align {
+    /// Which properties accept the keyword (CSS Box Alignment 3 grammar,
+    /// simplified to single keywords).
+    fn allowed_for(self, property: Longhand) -> bool {
+        use Align as A;
+        match property {
+            Longhand::JustifyContent => {
+                !matches!(self, A::Auto | A::Baseline | A::SelfStart | A::SelfEnd)
+            }
+            Longhand::AlignContent => !matches!(
+                self,
+                A::Auto | A::Left | A::Right | A::SelfStart | A::SelfEnd
+            ),
+            Longhand::AlignItems => !matches!(
+                self,
+                A::Auto | A::Left | A::Right | A::SpaceBetween | A::SpaceAround | A::SpaceEvenly
+            ),
+            Longhand::AlignSelf => !matches!(
+                self,
+                A::Left | A::Right | A::SpaceBetween | A::SpaceAround | A::SpaceEvenly
+            ),
+            _ => false,
+        }
+    }
+}
+
+/// `flex-basis`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FlexBasis {
+    Content,
+    Size(LengthPercentageAuto),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BorderWidth {
     Thin,
@@ -199,9 +294,37 @@ pub enum Longhand {
     BorderRightColor,
     BorderBottomColor,
     BorderLeftColor,
+    Position,
+    Top,
+    Right,
+    Bottom,
+    Left,
+    ZIndex,
+    Float,
+    Clear,
+    BoxSizing,
+    FlexDirection,
+    FlexWrap,
+    JustifyContent,
+    AlignItems,
+    AlignSelf,
+    AlignContent,
+    FlexGrow,
+    FlexShrink,
+    FlexBasis,
+    Order,
+    RowGap,
+    ColumnGap,
 }
 
-pub const LONGHAND_COUNT: usize = Longhand::BorderLeftColor as usize + 1;
+pub const LONGHAND_COUNT: usize = Longhand::ColumnGap as usize + 1;
+
+const INSETS: [Longhand; 4] = [
+    Longhand::Top,
+    Longhand::Right,
+    Longhand::Bottom,
+    Longhand::Left,
+];
 
 const MARGINS: [Longhand; 4] = [
     Longhand::MarginTop,
@@ -272,6 +395,20 @@ pub enum Value {
     TextAlign(TextAlign),
     ListStyleType(ListStyleType),
     Overflow(Overflow),
+    Position(Position),
+    Float(Float),
+    Clear(Clear),
+    BoxSizing(BoxSizing),
+    FlexDirection(FlexDirection),
+    FlexWrap(FlexWrap),
+    Align(Align),
+    /// Non-negative number (`flex-grow`, `flex-shrink`).
+    Number(f32),
+    /// `z-index` (`None` = `auto`) and `order`.
+    Integer(Option<i32>),
+    FlexBasis(FlexBasis),
+    /// `row-gap`/`column-gap`: `None` is `normal`.
+    Gap(Option<LengthPercentage>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -465,6 +602,82 @@ fn parse_font_shorthand(value: &[ComponentValue]) -> Option<Vec<(Longhand, Value
     ])
 }
 
+fn parse_number(cv: &ComponentValue) -> Option<f32> {
+    match cv {
+        ComponentValue::Token(Token::Number { value, .. }) if *value >= 0.0 => Some(*value as f32),
+        _ => None,
+    }
+}
+
+fn parse_integer(cv: &ComponentValue) -> Option<i32> {
+    match cv {
+        ComponentValue::Token(Token::Number {
+            value,
+            is_integer: true,
+        }) if value.abs() < f64::from(i32::MAX) => Some(*value as i32),
+        _ => None,
+    }
+}
+
+fn parse_flex_basis(cv: &ComponentValue) -> Option<FlexBasis> {
+    if ident(cv).is_some_and(|s| s.eq_ignore_ascii_case("content")) {
+        return Some(FlexBasis::Content);
+    }
+    parse_lpa(cv, false).map(FlexBasis::Size)
+}
+
+fn parse_gap(cv: &ComponentValue) -> Option<Option<LengthPercentage>> {
+    if ident(cv).is_some_and(|s| s.eq_ignore_ascii_case("normal")) {
+        return Some(None);
+    }
+    parse_length_percentage(cv, false).map(Some)
+}
+
+/// `flex: none | [grow shrink? || basis]` (CSS Flexbox 1 §7.1.1).
+fn parse_flex(value: &[ComponentValue]) -> Option<Vec<(Longhand, Value)>> {
+    let parts = items(value);
+    let pack = |grow: f32, shrink: f32, basis: FlexBasis| {
+        vec![
+            (Longhand::FlexGrow, Value::Number(grow)),
+            (Longhand::FlexShrink, Value::Number(shrink)),
+            (Longhand::FlexBasis, Value::FlexBasis(basis)),
+        ]
+    };
+    let zero = FlexBasis::Size(LengthPercentageAuto::LengthPercentage(
+        LengthPercentage::Percentage(0.0),
+    ));
+    if let [one] = parts.as_slice()
+        && ident(one).is_some_and(|s| s.eq_ignore_ascii_case("none"))
+    {
+        return Some(pack(0.0, 0.0, FlexBasis::Size(LengthPercentageAuto::Auto)));
+    }
+    let (mut grow, mut shrink, mut basis) = (None, None, None);
+    for cv in parts {
+        if let Some(n) = parse_number(cv) {
+            if grow.is_none() {
+                grow = Some(n);
+            } else if shrink.is_none() && basis.is_none() {
+                shrink = Some(n);
+            } else {
+                return None;
+            }
+        } else if basis.is_none() {
+            basis = Some(parse_flex_basis(cv)?);
+        } else {
+            return None;
+        }
+    }
+    if grow.is_none() && basis.is_none() {
+        return None;
+    }
+    Some(pack(
+        grow.unwrap_or(1.0),
+        shrink.unwrap_or(1.0),
+        // `flex: <number>` sets the basis to 0%.
+        basis.unwrap_or(zero),
+    ))
+}
+
 fn parse_line_height(cv: &ComponentValue) -> Option<LineHeight> {
     match cv {
         ComponentValue::Token(Token::Number { value, .. }) if *value >= 0.0 => {
@@ -518,6 +731,33 @@ fn parse_longhand(property: Longhand, value: &[ComponentValue]) -> Option<Value>
         L::PaddingTop | L::PaddingRight | L::PaddingBottom | L::PaddingLeft => {
             Value::LengthPercentage(parse_length_percentage(cv, false)?)
         }
+        L::Position => Value::Position(Position::from_ident(ident(cv)?)?),
+        L::Top | L::Right | L::Bottom | L::Left => {
+            Value::LengthPercentageAuto(parse_lpa(cv, true)?)
+        }
+        L::ZIndex => {
+            if ident(cv).is_some_and(|s| s.eq_ignore_ascii_case("auto")) {
+                Value::Integer(None)
+            } else {
+                Value::Integer(Some(parse_integer(cv)?))
+            }
+        }
+        L::Order => Value::Integer(Some(parse_integer(cv)?)),
+        L::Float => Value::Float(Float::from_ident(ident(cv)?)?),
+        L::Clear => Value::Clear(Clear::from_ident(ident(cv)?)?),
+        L::BoxSizing => Value::BoxSizing(BoxSizing::from_ident(ident(cv)?)?),
+        L::FlexDirection => Value::FlexDirection(FlexDirection::from_ident(ident(cv)?)?),
+        L::FlexWrap => Value::FlexWrap(FlexWrap::from_ident(ident(cv)?)?),
+        L::JustifyContent | L::AlignItems | L::AlignSelf | L::AlignContent => {
+            let a = Align::from_ident(ident(cv)?)?;
+            if !a.allowed_for(property) {
+                return None;
+            }
+            Value::Align(a)
+        }
+        L::FlexGrow | L::FlexShrink => Value::Number(parse_number(cv)?),
+        L::FlexBasis => Value::FlexBasis(parse_flex_basis(cv)?),
+        L::RowGap | L::ColumnGap => Value::Gap(parse_gap(cv)?),
         L::BorderTopWidth | L::BorderRightWidth | L::BorderBottomWidth | L::BorderLeftWidth => {
             Value::BorderWidth(parse_border_width(cv)?)
         }
@@ -569,6 +809,27 @@ fn longhand_by_name(name: &str) -> Option<Longhand> {
         "border-right-color" => L::BorderRightColor,
         "border-bottom-color" => L::BorderBottomColor,
         "border-left-color" => L::BorderLeftColor,
+        "position" => L::Position,
+        "top" => L::Top,
+        "right" => L::Right,
+        "bottom" => L::Bottom,
+        "left" => L::Left,
+        "z-index" => L::ZIndex,
+        "float" => L::Float,
+        "clear" => L::Clear,
+        "box-sizing" => L::BoxSizing,
+        "flex-direction" => L::FlexDirection,
+        "flex-wrap" => L::FlexWrap,
+        "justify-content" => L::JustifyContent,
+        "align-items" => L::AlignItems,
+        "align-self" => L::AlignSelf,
+        "align-content" => L::AlignContent,
+        "flex-grow" => L::FlexGrow,
+        "flex-shrink" => L::FlexShrink,
+        "flex-basis" => L::FlexBasis,
+        "order" => L::Order,
+        "row-gap" => L::RowGap,
+        "column-gap" => L::ColumnGap,
         _ => return None,
     })
 }
@@ -640,6 +901,66 @@ pub fn parse_declaration(decl: &Declaration) -> Vec<PropertyDeclaration> {
         Some(longhands.into_iter().zip(parsed).collect())
     };
     let pairs: Option<Vec<(Longhand, Value)>> = match decl.name.as_str() {
+        "inset" => sides(INSETS, &|cv| {
+            parse_lpa(cv, true).map(Value::LengthPercentageAuto)
+        }),
+        "flex" => match css_wide(value) {
+            Some(w) => Some(vec![
+                (Longhand::FlexGrow, w.clone()),
+                (Longhand::FlexShrink, w.clone()),
+                (Longhand::FlexBasis, w),
+            ]),
+            None => parse_flex(value),
+        },
+        "flex-flow" => match css_wide(value) {
+            Some(w) => Some(vec![
+                (Longhand::FlexDirection, w.clone()),
+                (Longhand::FlexWrap, w),
+            ]),
+            None => {
+                let (mut dir, mut wrap) = (None, None);
+                let mut ok = true;
+                for cv in items(value) {
+                    let word = ident(cv).unwrap_or("");
+                    if let (None, Some(d)) = (dir, FlexDirection::from_ident(word)) {
+                        dir = Some(d);
+                    } else if let (None, Some(w)) = (wrap, FlexWrap::from_ident(word)) {
+                        wrap = Some(w);
+                    } else {
+                        ok = false;
+                    }
+                }
+                (ok && (dir.is_some() || wrap.is_some())).then(|| {
+                    vec![
+                        (
+                            Longhand::FlexDirection,
+                            Value::FlexDirection(dir.unwrap_or(FlexDirection::Row)),
+                        ),
+                        (
+                            Longhand::FlexWrap,
+                            Value::FlexWrap(wrap.unwrap_or(FlexWrap::Nowrap)),
+                        ),
+                    ]
+                })
+            }
+        },
+        "gap" => match css_wide(value) {
+            Some(w) => Some(vec![
+                (Longhand::RowGap, w.clone()),
+                (Longhand::ColumnGap, w),
+            ]),
+            None => parse_each(value, parse_gap).and_then(|v| match v.as_slice() {
+                [a] => Some(vec![
+                    (Longhand::RowGap, Value::Gap(*a)),
+                    (Longhand::ColumnGap, Value::Gap(*a)),
+                ]),
+                [a, b] => Some(vec![
+                    (Longhand::RowGap, Value::Gap(*a)),
+                    (Longhand::ColumnGap, Value::Gap(*b)),
+                ]),
+                _ => None,
+            }),
+        },
         "margin" => sides(MARGINS, &|cv| {
             parse_lpa(cv, true).map(Value::LengthPercentageAuto)
         }),
@@ -878,7 +1199,7 @@ mod tests {
 
     #[test]
     fn longhand_count() {
-        assert_eq!(LONGHAND_COUNT, 38);
+        assert_eq!(LONGHAND_COUNT, 59);
     }
 
     #[test]

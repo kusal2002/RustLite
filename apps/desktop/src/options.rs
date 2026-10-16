@@ -19,6 +19,8 @@ Options:
   --dump-layout <HTML_FILE> Print element border boxes after layout (viewport = --size)
   --debug-overlay           Start with the paint debug overlay enabled
   --disable-javascript      Do not run page scripts
+  --single-process          Render pages in the browser process (no renderer
+                            processes or sandbox; for debugging)
   -h, --help                Print this help
 ";
 
@@ -33,6 +35,8 @@ pub struct Options {
     pub debug_overlay: bool,
     /// Run page scripts (`--disable-javascript` clears it).
     pub javascript: bool,
+    /// Keep pages in the browser process (`--single-process`).
+    pub single_process: bool,
     pub help: bool,
     /// Local HTML file to open (named explicitly by the user).
     pub open: Option<PathBuf>,
@@ -49,6 +53,7 @@ impl Default for Options {
             exit_after_frames: None,
             debug_overlay: false,
             javascript: true,
+            single_process: false,
             help: false,
             open: None,
         }
@@ -81,6 +86,7 @@ impl Options {
                 "-h" | "--help" => opts.help = true,
                 "--debug-overlay" => opts.debug_overlay = true,
                 "--disable-javascript" => opts.javascript = false,
+                "--single-process" => opts.single_process = true,
                 "--size" => {
                     let value = args.next().ok_or(OptionsError::MissingValue("--size"))?;
                     opts.size = parse_size(&value)?;

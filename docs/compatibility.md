@@ -75,11 +75,16 @@ Supported:
   `background`), `font-size`, `font-weight` (incl. `bolder`/`lighter`),
   `font-style`, `font-family`, `line-height`, `text-align`, `overflow(-x/-y)`,
   `width`, `height`, `margin(-*)`, `padding(-*)`, `border`, `border-*`,
-  `border-{width,style,color}` and per-side longhands.
+  `border-{width,style,color}` and per-side longhands; `position`, `inset`
+  and `top`/`right`/`bottom`/`left`, `z-index`, `float`, `clear`,
+  `box-sizing`, `flex-direction`/`-wrap`/`-flow`, `justify-content`,
+  `align-items`/`-self`/`-content`, `flex`/`-grow`/`-shrink`/`-basis`,
+  `order`, `gap`/`row-gap`/`column-gap` (style fixture `layout-properties`).
 - Values: lengths in px/em/rem/vw/vh/vmin/vmax/in/cm/mm/Q/pt/pc, percentages,
   font-size keywords, all 148 named colors, hex, `rgb()`/`rgba()`/`hsl()`/`hsla()`
   (legacy and modern syntax), `transparent`, `currentcolor`.
-- Computed-value rules: root blockification, border width 0 for `none`/`hidden`,
+- Computed-value rules: blockification of the root, floats, absolutely
+  positioned boxes and flex items; border width 0 for `none`/`hidden`,
   border-width snapping, overflow `visible`/`clip` fix-up.
 
 Not supported yet:
@@ -93,12 +98,11 @@ Not supported yet:
 | `font` shorthand; `background` with images/positions | Declaration dropped |
 | Monospace default size (13px), `th`/`center` `-internal-center` | Not modeled |
 | Default font family | `"Times New Roman"` (`Times` on macOS; Linux/macOS not observed) |
-| Positioned/floated blockification | Only the root element is blockified |
 
 ### Layout (LAYOUT-001) — Tested, verified on reference browser
 
 Evidence: [LAYOUT-001](../research/specifications/LAYOUT-001.md),
-`crates/browser-core/tests/layout_golden.rs` (13/13 fixtures incl. `form-controls`; within each fixture's tolerance of Chromium 152).
+`crates/browser-core/tests/layout_golden.rs` (19/19 fixtures incl. `form-controls` and the LAYOUT-002 set below; within each fixture's tolerance of Chromium 152).
 
 Supported: block boxes and anonymous block boxes, `display: none`/`contents`;
 CSS 2.1 width resolution with `auto` margins and percentages; `height` px/%/auto;
@@ -111,17 +115,61 @@ painting; canvas background propagation from `html`/`body`; device pixel ratio.
 
 | Area | Behavior today |
 |---|---|
-| Floats, `position`, flex, grid, tables | Laid out as ordinary blocks |
-| `inline-block`, form controls | Treated as inline containers |
+| Grid, tables, multi-column | Laid out as ordinary blocks |
 | Images | Local PNG/JPEG/GIF inside the document's directory; inline (baseline-aligned atomic) or block; `width`/`height` attributes as presentational hints; intrinsic ratio. No network/`data:`/SVG/WebP, no `object-fit`, broken images render nothing ([IMAGE-001](../research/specifications/IMAGE-001.md)) |
 | List markers | Outside markers for disc/circle/square/decimal/alpha/roman; `<ol start>`, `<li value>`; no `list-style-position: inside`, `list-style-image`, `reversed`, or `::marker` styling |
-| `white-space` other than `normal`, CJK/hyphen/UAX #14 break opportunities | Not supported (breaks only at spaces) |
+| `white-space` other than `normal`, CJK and other UAX #14 break opportunities | Not supported (breaks at spaces and after hyphens only) |
 | Bidi, vertical text, `vertical-align` | Not supported |
 | Inline padding/borders/margins/backgrounds | Ignored |
-| `min-*`/`max-*` sizes, `box-sizing` | Not supported (content-box) |
 | Border styles | solid, dashed, dotted, double; groove/ridge/inset/outset painted solid (no 3D shading) |
 | Scrollbars | None drawn; the page scrolls with wheel/keys |
 | Nesting deeper than 200 block levels | Flattened into inline content (stack safety) |
+
+### Advanced layout (LAYOUT-002) — Tested, verified on reference browser
+
+Evidence: layout fixtures `positioning`, `floats`, `inline-block`,
+`flexbox`, `box-sizing`, `hyphen-breaks` and `form-controls` row 6 match
+Chromium 152 within 0.02 px; 36,000 extra release fuzz cases over the new
+code found no failures.
+
+Supported:
+- **Positioning:** `relative` (offsets after layout, children move with
+  it), `absolute` (containing block = nearest positioned ancestor's padding
+  box, else the viewport; static position for `auto` insets; shrink-to-fit
+  width; insets with width/height), `fixed` (viewport, does not scroll),
+  `z-index` stacking for positioned boxes (negative, `auto`/0 and positive
+  layers, tree order within a layer); hit testing honors scroll and fixed
+  boxes.
+- **Floats:** left/right floats in block and inline content, line boxes
+  shortened next to floats, stacking and wrapping of floats, `clear`
+  (clearance on blocks), BFC roots (`overflow`,
+  floats, inline-blocks, absolutely positioned and flex boxes) contain
+  their floats and are narrowed next to outside floats.
+- **`inline-block`/`inline-flex`:** atomic inlines with shrink-to-fit width
+  (min/max-content), baseline = last line box (or bottom margin edge when
+  `overflow` is not `visible` or there are no lines).
+- **Flexbox (simplified §9):** row/column and reverse directions, `wrap`/
+  `wrap-reverse`, `order`, `flex-grow`/`-shrink`/`-basis` with freezing,
+  `justify-content` (incl. `space-*`), `align-items`/`-self` (stretch,
+  start/end, center, baseline), `align-content`, `gap`, main-axis auto
+  margins, min/max sizes and the automatic minimum size on items.
+- **`box-sizing: border-box`** for width/height/min/max sizes, including
+  floats, absolutely positioned boxes and flex items.
+- **Break opportunities after hyphens** (`-`, U+2010) between letters, as
+  UAX #14 does.
+- Form controls can be floated, absolutely positioned or `display: block`.
+
+Known differences:
+- `auto` margins on absolutely positioned boxes are treated as 0 (no
+  centering with `inset: 0; margin: auto`).
+- A float in the middle of inline content ends the current run of lines:
+  it is placed below the text before it, not on the current line.
+- Flex baseline alignment uses the first line's baseline and only in
+  single-line rows; cross-axis `auto` margins on flex items are 0.
+- Relative positioning of inline (non-atomic) elements is ignored.
+- `position: sticky` behaves as `relative`; no `float: inline-start/end`,
+  `z-index` on non-positioned flex items, or stacking contexts from
+  `opacity`/`transform`.
 
 ### Fonts and text (FONT-001)
 

@@ -2195,6 +2195,7 @@ dependencies = [
  "rustlite-net",
  "rustlite-paint",
  "rustlite-renderer",
+ "rustlite-sandbox",
  "rustlite-style",
  "softbuffer",
  "thiserror 2.0.21",
@@ -2270,6 +2271,14 @@ dependencies = [
  "rustlite-paint",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "rustlite-sandbox"
+version = "0.1.0"
+dependencies = [
+ "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

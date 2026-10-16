@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Added — 2026-10-17 (Phase 10, parts 2 and 3)
+- Layout: `position: relative/absolute/fixed` with `z-index` paint order,
+  floats and `clear`, `inline-block`/`inline-flex`, min/max-content and
+  shrink-to-fit sizing, flexbox (direction, wrap, order, grow/shrink/basis,
+  justify/align, gap), `box-sizing`, line breaks after hyphens; form
+  controls can be floated, positioned or block-level. Six new layout
+  fixtures and a `layout-properties` style fixture match Chromium 152.
+- Renderer processes (`rustlite --renderer`): one per tab per site, framed
+  stdin/stdout IPC with hostile-input decoding, a 10 s watchdog with an
+  error-page fallback, `--single-process` to opt out.
+- Windows sandbox (`rustlite-sandbox`, `windows-sys`): job object per
+  renderer (1 GiB memory cap, no child processes, UI restrictions, kill on
+  close) and renderer lockdown (low integrity, no privileges, no dynamic
+  code, image-load policy). ADR-0006.
+- `PageHandle` (local or remote page) used by tabs and the window;
+  `Page::set_image_bytes` decodes images inside the renderer.
+
+### Changed — 2026-10-17
+- `unsafe_code = "forbid"` now applies to every crate except
+  `rustlite-sandbox` (per-function `allow`, documented calls only).
+- ADR-0005 status: implemented on Windows.
+
 ### Added — 2026-10-16 (Phase 10, part 1)
 - Timers (`setTimeout`, `setInterval`, clears), `requestAnimationFrame`,
   `performance.now()`; the desktop event loop wakes for page timers and

@@ -7,12 +7,17 @@
 //! repaints. A [`Tab`] adds navigation: network loads, history, subresources
 //! and error pages.
 
+mod handle;
 pub mod images;
 mod interaction;
+pub mod ipc;
+pub mod remote;
 mod scripts;
 mod tab;
 
+pub use handle::PageHandle;
 pub use interaction::{InputOutcome, PageKey};
+pub use remote::{RemotePage, Spawned, Spawner, serve};
 
 pub use tab::{
     Initiator, NavState, NavigationError, Tab, error_page_html, load_id_space, parse_user_input,
@@ -617,6 +622,22 @@ impl Page {
         self.paint_dirty = true;
     }
 
+    /// Decodes image bytes fetched for `<img>` element `node` (in the
+    /// renderer process, untrusted bytes never reach the browser's
+    /// decoders). Returns whether the image decoded.
+    pub fn set_image_bytes(&mut self, node: NodeId, bytes: &[u8]) -> bool {
+        match images::decode_bytes(bytes) {
+            Ok(image) => {
+                self.set_image(node, Rc::new(image));
+                true
+            }
+            Err(e) => {
+                tracing::warn!(error = ?e, "image not decoded");
+                false
+            }
+        }
+    }
+
     /// Supplies a decoded image for `<img>` element `node`; invalidates layout.
     pub fn set_image(&mut self, node: NodeId, image: Rc<rustlite_paint::ImageData>) {
         let Content::Html(doc) = &mut self.content else {
@@ -632,7 +653,7 @@ impl Page {
     pub fn link_at(&mut self, x: f32, y: f32) -> Option<Url> {
         let (scale, scroll) = (self.device_scale, self.scroll_y);
         let (dom, tree) = self.layout()?;
-        let node = rustlite_layout::hit_test(tree, x / scale, y / scale + scroll)?;
+        let node = rustlite_layout::hit_test_scrolled(tree, x / scale, y / scale + scroll, scroll)?;
         let anchor = std::iter::once(node)
             .chain(dom.ancestors(node))
             .find(|&n| {

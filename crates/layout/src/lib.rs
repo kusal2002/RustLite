@@ -11,9 +11,12 @@ mod block;
 mod build;
 mod controls;
 mod find;
+mod flex;
 mod geometry;
 mod inline;
+mod intrinsic;
 mod paint;
+mod positioned;
 mod replaced;
 
 use std::collections::HashMap;
@@ -46,6 +49,15 @@ pub struct BlockBox {
     pub marker: Option<Marker>,
     /// Set for block-level replaced elements (e.g. `img { display: block }`).
     pub replaced: Option<ReplacedContent>,
+    /// Absolutely positioned (and fixed) boxes whose static position lies in
+    /// this box. They are laid out after normal flow (CSS 2.1 §10.3.7).
+    pub out_of_flow: Vec<BlockBox>,
+    /// For out-of-flow boxes: how many in-flow children of the parent come
+    /// before it (locates the static position).
+    pub static_index: usize,
+    /// For out-of-flow boxes: the static position of the border box, relative
+    /// to the parent's content box (set during the parent's layout).
+    pub static_position: (f32, f32),
 }
 
 /// An outside list marker: shaped text placed to the left of the list item's
@@ -68,12 +80,52 @@ impl BlockBox {
     pub fn padding_rect(&self) -> RectF {
         self.rect.inset(&self.border)
     }
+
+    /// Every box nested directly in this one: in-flow blocks or flex items,
+    /// inline-level blocks (`inline-block`, `inline-flex`), then out-of-flow
+    /// boxes, in painting order.
+    pub fn child_boxes(&self) -> Vec<&BlockBox> {
+        let mut out: Vec<&BlockBox> = Vec::new();
+        match &self.children {
+            BlockChildren::Blocks(kids) | BlockChildren::Flex(kids) => out.extend(kids.iter()),
+            BlockChildren::Inline(inline) => {
+                for item in &inline.items {
+                    if let InlineItem::Atomic { block: Some(b), .. } = item {
+                        out.push(b);
+                    }
+                }
+            }
+            BlockChildren::Empty => {}
+        }
+        out.extend(self.out_of_flow.iter());
+        out
+    }
+
+    /// Mutable [`BlockBox::child_boxes`].
+    pub fn child_boxes_mut(&mut self) -> Vec<&mut BlockBox> {
+        let mut out: Vec<&mut BlockBox> = Vec::new();
+        match &mut self.children {
+            BlockChildren::Blocks(kids) | BlockChildren::Flex(kids) => out.extend(kids.iter_mut()),
+            BlockChildren::Inline(inline) => {
+                for item in &mut inline.items {
+                    if let InlineItem::Atomic { block: Some(b), .. } = item {
+                        out.push(b);
+                    }
+                }
+            }
+            BlockChildren::Empty => {}
+        }
+        out.extend(self.out_of_flow.iter_mut());
+        out
+    }
 }
 
 #[derive(Debug)]
 pub enum BlockChildren {
     Blocks(Vec<BlockBox>),
     Inline(InlineContent),
+    /// Flex items of a flex container, in `order`.
+    Flex(Vec<BlockBox>),
     Empty,
 }
 
@@ -90,13 +142,15 @@ pub enum InlineItem {
         node: NodeId,
         style: Rc<ComputedStyle>,
     },
-    /// An atomic inline-level box: a replaced element such as `<img>`, or a
-    /// form control.
+    /// An atomic inline-level box: a replaced element such as `<img>`, a
+    /// form control, or an inline-level block container (`inline-block`,
+    /// `inline-flex`).
     Atomic {
         node: NodeId,
         style: Rc<ComputedStyle>,
         image: Option<Rc<ImageData>>,
         control: Option<Control>,
+        block: Option<Box<BlockBox>>,
     },
 }
 
@@ -152,6 +206,8 @@ pub struct LayoutTree {
 /// Inputs shared by every layout function.
 pub(crate) struct LayoutContext<'a> {
     pub fonts: &'a mut FontContext,
+    /// Floats of the enclosing block formatting contexts, innermost last.
+    pub floats: Vec<block::Floats>,
 }
 
 /// Builds and lays out the box tree for `doc` in a viewport of `viewport` px.
@@ -173,7 +229,10 @@ pub fn layout_document_with_images(
     viewport: (f32, f32),
 ) -> LayoutTree {
     let mut root = build::build_box_tree(doc, styles, images);
-    let mut ctx = LayoutContext { fonts };
+    let mut ctx = LayoutContext {
+        fonts,
+        floats: vec![block::Floats::default()],
+    };
     let mut document_height = 0.0;
     if let Some(root) = root.as_mut() {
         let outcome = block::layout_root(root, viewport, &mut ctx);
@@ -182,8 +241,11 @@ pub fn layout_document_with_images(
         let top = root.margin.top;
         root.rect.x = root.margin.left;
         root.rect.y = top;
-        geometry::make_absolute(root, 0.0, 0.0);
+        geometry::make_absolute(root, 0.0, 0.0, viewport);
         document_height = top + outcome.height + root.margin.bottom;
+        // Absolutely positioned boxes extend the scrollable area.
+        let positioned_bottom = positioned::layout_out_of_flow(root, viewport, &mut ctx);
+        document_height = f32::max(document_height, positioned_bottom);
     }
     LayoutTree {
         root,
@@ -196,32 +258,37 @@ pub fn layout_document_with_images(
 /// innermost inline element of the text under the point, an image, or else
 /// the deepest block containing it. Later content wins, matching paint order.
 pub fn hit_test(tree: &LayoutTree, x: f32, y: f32) -> Option<NodeId> {
-    let inside = |r: &RectF| x >= r.x && x < r.right() && y >= r.y && y < r.bottom();
+    hit_test_scrolled(tree, x, y, 0.0)
+}
+
+/// [`hit_test`] for a document scrolled by `scroll_y`: fixed-position boxes
+/// stay where they are on screen.
+pub fn hit_test_scrolled(tree: &LayoutTree, x: f32, y: f32, scroll_y: f32) -> Option<NodeId> {
     let mut best = None;
-    let mut stack: Vec<&BlockBox> = tree.root.iter().collect();
-    while let Some(b) = stack.pop() {
+    let mut stack: Vec<(&BlockBox, bool)> = tree.root.iter().map(|r| (r, false)).collect();
+    while let Some((b, fixed_parent)) = stack.pop() {
+        let fixed = fixed_parent || b.style.position == rustlite_style::properties::Position::Fixed;
+        let y = if fixed { y - scroll_y } else { y };
+        let inside = |r: &RectF| x >= r.x && x < r.right() && y >= r.y && y < r.bottom();
         if !inside(&b.rect) {
             // Content can overflow its block, so descendants are still searched.
         } else if b.node.is_some() {
             best = b.node;
         }
-        match &b.children {
-            BlockChildren::Blocks(kids) => stack.extend(kids.iter().rev()),
-            BlockChildren::Inline(inline) => {
-                for f in inline.lines.iter().flat_map(|l| &l.fragments) {
-                    if !inside(&f.rect) {
-                        continue;
-                    }
-                    best = match &inline.items[f.item] {
-                        InlineItem::Text { ancestors, .. } => ancestors.last().copied().or(b.node),
-                        InlineItem::Atomic { node, .. } | InlineItem::LineBreak { node, .. } => {
-                            Some(*node)
-                        }
-                    };
+        if let BlockChildren::Inline(inline) = &b.children {
+            for f in inline.lines.iter().flat_map(|l| &l.fragments) {
+                if !inside(&f.rect) {
+                    continue;
                 }
+                best = match &inline.items[f.item] {
+                    InlineItem::Text { ancestors, .. } => ancestors.last().copied().or(b.node),
+                    InlineItem::Atomic { node, .. } | InlineItem::LineBreak { node, .. } => {
+                        Some(*node)
+                    }
+                };
             }
-            BlockChildren::Empty => {}
         }
+        stack.extend(b.child_boxes().into_iter().rev().map(|k| (k, fixed)));
     }
     best
 }
@@ -246,8 +313,9 @@ pub fn tree_size(tree: &LayoutTree) -> TreeSize {
     while let Some(b) = stack.pop() {
         size.boxes += 1;
         size.bytes += size_of::<BlockBox>();
+        stack.extend(b.child_boxes());
         match &b.children {
-            BlockChildren::Blocks(kids) => stack.extend(kids.iter()),
+            BlockChildren::Blocks(_) | BlockChildren::Flex(_) => {}
             BlockChildren::Inline(inline) => {
                 size.bytes += inline.items.capacity() * size_of::<InlineItem>();
                 for item in &inline.items {
@@ -295,8 +363,9 @@ pub fn caret_geometry(
 ) -> Option<CaretGeometry> {
     let mut stack: Vec<&BlockBox> = tree.root.iter().collect();
     while let Some(b) = stack.pop() {
+        stack.extend(b.child_boxes());
         match &b.children {
-            BlockChildren::Blocks(kids) => stack.extend(kids.iter()),
+            BlockChildren::Blocks(_) | BlockChildren::Flex(_) => {}
             BlockChildren::Inline(inline) => {
                 for f in inline.lines.iter().flat_map(|l| &l.fragments) {
                     let InlineItem::Atomic {

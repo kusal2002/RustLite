@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>RustLite layout demo</title>
+<style>
+  * { box-sizing: border-box }
+  body { margin: 0; font-family: Georgia, serif; background: #f4f1ea; color: #222 }
+  nav { display: flex; justify-content: space-between; align-items: center; background: #263238; color: white; padding: 10px 24px }
+  nav .brand { font-size: 22px; font-weight: bold }
+  nav .links { display: flex; gap: 18px }
+  main { padding: 20px 24px 60px }
+  .cards { display: flex; flex-wrap: wrap; gap: 16px }
+  .card { position: relative; flex: 1 1 200px; background: white; border: 1px solid #ccc; padding: 14px; min-height: 110px }
+  .card h3 { margin: 0 0 6px; font-size: 18px }
+  .badge { position: absolute; top: -8px; right: -8px; background: #c62828; color: white; padding: 2px 8px; font-size: 12px; z-index: 2 }
+  .tag { display: inline-block; background: #e3f2fd; border: 1px solid #90caf9; padding: 1px 6px; margin: 2px; font-size: 13px }
+  .story { margin-top: 24px; background: white; border: 1px solid #ccc; padding: 16px; overflow: hidden }
+  .figure { float: left; width: 140px; height: 100px; margin: 0 14px 6px 0; background: #8d6e63; color: white; padding: 8px }
+  .note { float: right; width: 160px; background: #fff8e1; border: 1px solid #ffcc80; padding: 8px; margin: 0 0 6px 14px; font-size: 14px }
+  .stack { position: relative; height: 90px; margin-top: 24px }
+  .stack div { position: absolute; width: 140px; height: 60px; padding: 6px; color: white }
+  footer { position: fixed; left: 0; right: 0; bottom: 0; background: rgba(38, 50, 56, 0.92); color: white; padding: 8px 24px; font-size: 14px }
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">RustLite</span>
+  <span class="links"><span>Home</span><span>Docs</span><span>Layout</span></span>
+</nav>
+<main>
+  <div class="cards">
+    <div class="card"><span class="badge">new</span><h3>Flexbox</h3>Cards share the row with <span class="tag">flex: 1 1 200px</span> and wrap.</div>
+    <div class="card"><h3>Positioning</h3>The badge is <span class="tag">absolute</span> in a <span class="tag">relative</span> card.</div>
+    <div class="card"><h3>Floats</h3>Text below wraps around a left float and a right note.</div>
+  </div>
+  <div class="story">
+    <div class="figure">float: left</div>
+    <div class="note">A right float with its own text, shrink-wrapped to 160px.</div>
+    Lines next to floats are shortened, and continue at full width once they pass the floats' bottom edges.
+    The container has overflow: hidden, so it establishes a block formatting context and grows to contain
+    both floats. This paragraph keeps going long enough to wrap under the figure on the left side, showing
+    how line boxes regain their full width below the floats.
+  </div>
+  <div class="stack">
+    <div style="left: 0; top: 0; background: #1565c0; z-index: 1">z-index 1</div>
+    <div style="left: 60px; top: 20px; background: #2e7d32; z-index: 3">z-index 3</div>
+    <div style="left: 120px; top: 10px; background: #ef6c00; z-index: 2">z-index 2</div>
+  </div>
+</main>
+<footer>position: fixed footer · stays at the bottom while the page scrolls</footer>
+</body>
+</html>

@@ -1,0 +1,21 @@
+<!DOCTYPE html><!-- compare: display position top right bottom left z-index float clear box-sizing flex-direction flex-wrap justify-content align-items align-self align-content flex-grow flex-shrink flex-basis order row-gap column-gap -->
+<style>
+#rel { position: relative; top: 3px; right: 4px; bottom: 5px; left: 6px; z-index: 2 }
+#abs { position: absolute; inset: 1px 2px 3px 4px; z-index: -1 }
+#absspan { position: fixed; inset: 0px }
+#fl { float: right; clear: both; box-sizing: border-box }
+#flspan { float: left }
+#flex { display: flex; flex-flow: column wrap; justify-content: space-between; align-items: center; align-content: space-around; gap: 10px 2em }
+#flex > span { flex: 2 3 40px; order: -2; align-self: flex-end }
+#flex > .none { flex: none }
+#flex > .num { flex: 3 }
+#flex > .basis { flex: content; }
+#bad { position: middle; float: up; flex-grow: -1; order: 1.5; z-index: auto; justify-content: baseline; align-items: space-between }
+#gaps { display: inline-flex; row-gap: 5%; column-gap: normal; flex-wrap: wrap-reverse; flex-direction: row-reverse; justify-content: flex-end; align-items: baseline }
+#inh { position: inherit; float: inherit; flex-grow: inherit; order: inherit }
+</style>
+<div id=rel>r<div id=abs>a</div><span id=absspan>s</span></div>
+<div id=fl>f</div><span id=flspan>g</span>
+<div id=flex><span id=item>i</span><span class=none id=none>n</span><span class=num id=num>m</span><span class=basis id=basis>b</span>text</div>
+<div id=bad>b</div>
+<div id=gaps><div id=inh>x</div></div>

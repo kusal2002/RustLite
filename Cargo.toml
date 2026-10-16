@@ -13,6 +13,7 @@ members = [
     "crates/net",
     "crates/paint",
     "crates/renderer",
+    "crates/sandbox",
     "crates/script",
     "crates/style",
 ]
@@ -35,6 +36,7 @@ rustlite-layout = { path = "crates/layout" }
 rustlite-net = { path = "crates/net" }
 rustlite-paint = { path = "crates/paint" }
 rustlite-renderer = { path = "crates/renderer" }
+rustlite-sandbox = { path = "crates/sandbox" }
 rustlite-script = { path = "crates/script" }
 rustlite-style = { path = "crates/style" }
 
@@ -55,6 +57,8 @@ ureq = { version = "3.4.2", default-features = false, features = ["rustls", "pla
 url = "2.5.8"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 winit = "0.30"
+# Raw Win32 bindings for the renderer sandbox only (already in the tree via winit).
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

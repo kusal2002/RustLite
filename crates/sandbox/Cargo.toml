@@ -1,0 +1,24 @@
+[package]
+name = "rustlite-sandbox"
+description = "OS sandboxing for RustLite renderer processes (the only crate allowed to use `unsafe`, for Win32 calls)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true }
+
+[dependencies]
+tracing.workspace = true
+
+# Not `[lints] workspace = true`: the workspace forbids `unsafe_code`, which
+# cannot be relaxed per item. Here it is denied crate-wide and allowed only on
+# the functions that call the Win32 API (see ADR-0006).
+[lints.rust]
+unsafe_code = "deny"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "deny"

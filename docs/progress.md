@@ -45,6 +45,9 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | SEC-002 | Mixed-content blocking; script MIME refusal; seeded fuzzing in CI; isolation ADR | Tested | `https_pages_do_not_load_http_subresources`; `fuzz.rs` (3 targets); ADR-0005 |
 | WEBAPI-001 | Timers, animation frames, `performance.now`, event loop in the window and headless renders, `element.style`, fetching resources scripts insert | Tested | `rustlite-script` timer/style tests; `timers_change_the_page_later`; `images_inserted_by_timers_are_fetched` |
 | FORM-001 | Form controls (text, password, buttons, checkbox, radio): layout, paint, focus, editing, keyboard events, GET submission | Verified on reference browser (layout) / Tested | `form-controls` layout fixture vs Chromium 152; `interaction.rs` (9 tests); scripted window typing |
+| LAYOUT-002 | Positioning (relative/absolute/fixed, z-index), floats and clearance, inline-block/inline-flex, flexbox, `box-sizing`, hyphen break opportunities; style properties for all of them | Verified on reference browser (fixture set) | `positioning`, `floats`, `inline-block`, `flexbox`, `box-sizing`, `hyphen-breaks` layout fixtures and `layout-properties` style fixture match Chromium 152 (≤0.02 px); 36,000 extra release fuzz cases |
+| PROC-001 | Renderer process per tab per site, framed IPC, watchdog and crash fallback, `--single-process` | Tested | `apps/desktop/tests/renderer.rs` (end-to-end page, hung renderer, garbage renderer); IPC/message decode unit tests; scripted window runs with 3 tabs |
+| SANDBOX-001 | Windows sandbox: job object per renderer (memory cap, no child processes, UI limits, kill on close) and low-integrity, privilege-free, mitigated renderer token | Tested (Windows) | `sandboxed_renderer_cannot_write_files_or_start_processes`; every renderer in window runs logged a complete lockdown at integrity 0x1000; ADR-0006 |
 | CSS-002 | `font` shorthand, `min-/max-width/height`, `light-dark()` | Verified on reference browser (fixture set) | `font-shorthand` style and `min-max-sizes` layout fixtures match Chromium 152 |
 | JS-001 | JS runtime | Deferred (Phase 9) | — |
 
@@ -52,7 +55,7 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 | Platform | Build | Tests | Window | Notes |
 |---|---|---|---|---|
-| Windows 11 x64 (MSVC) | ✅ | ✅ 288/288 | ✅ | Ryzen 5 5600G, Radeon iGPU |
+| Windows 11 x64 (MSVC) | ✅ | ✅ 299/299 | ✅ | Ryzen 5 5600G, Radeon iGPU; sandboxed renderers |
 | Linux x64 | ✅ CI | ✅ CI (run 38864693788) | Unverified | No display in CI; text layout goldens skip (no Times New Roman) |
 | macOS | ✅ CI | ✅ CI (run 38864693788) | Unverified | Layout text goldens pin Times New Roman and skip if its metrics differ from the reference machine |
 
@@ -60,17 +63,15 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 - Local documents load images/stylesheets only from their own directory; network
   documents only over http(s). No `data:` URLs, cookies, cache or JavaScript.
-- Single process, no sandbox (see [security.md](security.md)).
-- Layout covers normal flow only: no floats, positioning, flex, grid, tables,
-  images or list markers yet (see compatibility.md).
+- Renderer processes are sandboxed on Windows only, and can still read
+  files and reach the network there (see [security.md](security.md)).
+- No grid, tables or `position: sticky` (see compatibility.md).
 - CSS gaps (at-rules, `:not()`, `var()`, `calc()`, external sheets) are listed in
   [compatibility.md](compatibility.md#css-css-001--tested-verified-on-reference-browser).
 - HTML parser deviations are listed in [compatibility.md](compatibility.md#html-parsing-html-001--tested-verified-on-reference-browser).
 - Toolbar has no text (no font stack yet); buttons only log clicks.
 - No vsync/frame pacing (softbuffer on Windows presents immediately).
 - Window path has no automated test that runs without a display.
-- Single process, no sandboxing — not secure for untrusted content (nothing
-  untrusted is loaded yet).
 
 ## Milestone log
 
@@ -292,3 +293,40 @@ Tested · Verified on reference browser · Blocked · Deferred.
   script time limit.
 - **Next (Phase 10 part 2 or 3):** advanced CSS layout (inline-block,
   floats, positioning, flexbox) or the process split (ADR-0005).
+
+### 2026-10-17 — Phase 10 (parts 2 and 3): advanced CSS layout, renderer processes, Windows sandbox
+
+- **Scope chosen with the user:** the remaining Phase 10 parts. For the
+  sandbox the user chose scoped `unsafe` in one new crate using
+  `windows-sys` (ADR-0006); Linux/macOS sandboxes are the next step.
+- **Layout:** `position` relative/absolute/fixed with `z-index` paint
+  order, floats with clearance and BFC narrowing, inline-block and
+  inline-flex, min/max-content sizing and shrink-to-fit, flexbox
+  (simplified §9), `box-sizing`, break opportunities after hyphens;
+  block-level form controls. 21 new style longhands and 4 shorthands.
+- **Isolation:** each tab's page runs in `rustlite --renderer` (one per tab
+  per site), driven over framed stdin/stdout IPC with hostile-input
+  decoding; a 10 s watchdog replaces hung, crashed or misbehaving renderers
+  with an error page; `--single-process` for debugging.
+- **Sandbox (Windows):** job object per renderer (1 GiB memory, no child
+  processes, UI limits, kill on close) and renderer lockdown (low
+  integrity, no privileges, no dynamic code, image-load policy).
+  `unsafe` exists only in `crates/sandbox/src/windows.rs`.
+- **Verification:** 19/19 layout fixtures (6 new) and 14/14 style fixtures
+  match Chromium 152 (≤0.02 px); 36,000 extra release fuzz cases over the
+  new layout code, no failures. The sandbox self-test confirms low
+  integrity, job membership, denied file writes and process starts.
+  Scripted window runs: typing and GET submission through a renderer; three
+  tabs gave four processes, each renderer logged a complete lockdown at
+  integrity 0x1000, and all renderers exited with the browser.
+- **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 299 passed
+  · release build ✅.
+- **Measurements:** binary 11.2 MiB (+0.2 MiB); three tabs 64.8 MB working
+  set over 4 processes (browser 23.2 MB, renderers 10.3–16.1 MB); warm
+  layout of `article-400` about 10–20% slower than the Phase 8 baseline
+  (one run showed ×1.93; repeated runs ×1.05–1.47).
+- **Not done:** sandboxes on Linux and macOS; AppContainer (renderers can
+  still read files and open sockets on Windows); local `file:` pages read
+  their subresources in the renderer; `auto` margins for absolutely
+  positioned boxes; grid, tables, sticky positioning.
+- **Next:** see [roadmap.md](roadmap.md).

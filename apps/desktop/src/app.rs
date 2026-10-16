@@ -17,7 +17,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::WindowId;
 
-use crate::browser_window::{BrowserWindow, Flow, WindowError};
+use crate::browser_window::{BrowserWindow, Flow, WindowConfig, WindowError};
 use crate::frame::{self, WINDOW_BACKGROUND};
 use crate::options::Options;
 use crate::toolbar::{ToolbarLayout, ToolbarView, UI_FONT_SIZE, shape_ui_text};
@@ -96,15 +96,14 @@ impl ApplicationHandler<AppEvent> for App {
             .open
             .as_deref()
             .map(crate::options::command_line_input);
-        match BrowserWindow::new(
-            event_loop,
-            self.options.size,
-            self.options.debug_overlay,
-            self.options.exit_after_frames,
-            self.loader.clone(),
-            initial,
-            self.options.javascript,
-        ) {
+        let config = WindowConfig {
+            size: self.options.size,
+            debug_overlay: self.options.debug_overlay,
+            exit_after_frames: self.options.exit_after_frames,
+            javascript: self.options.javascript,
+            renderer: (!self.options.single_process).then(crate::renderer::spawner),
+        };
+        match BrowserWindow::new(event_loop, self.loader.clone(), initial, config) {
             Ok(window) => self.window = Some(window),
             Err(e) => self.fail(event_loop, e.into()),
         }
@@ -318,7 +317,7 @@ pub fn render_headless(options: &Options, path: &Path) -> Result<HeadlessReport,
         raster_ms = ms(raster_time),
         "headless frame written"
     );
-    tracing::info!(memory = %tab.page().memory_report(), "page memory");
+    tracing::info!(memory = %tab.page_mut().memory_report(), "page memory");
     Ok(HeadlessReport {
         display_items: list.len(),
         raster_time,

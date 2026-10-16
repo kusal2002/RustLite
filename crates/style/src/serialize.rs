@@ -25,6 +25,10 @@ pub fn format_number(v: f32) -> String {
     if s == "-0" { "0".into() } else { s.into() }
 }
 
+fn number(v: f32) -> String {
+    format_number(v)
+}
+
 fn px(v: f32) -> String {
     format!("{}px", format_number(v))
 }
@@ -135,6 +139,30 @@ pub fn resolved_value(style: &ComputedStyle, property: &str) -> Option<String> {
         "min-height" => length_auto(style.min_height).replace("auto", "0px"),
         "max-width" => style.max_width.map_or("none".into(), length),
         "max-height" => style.max_height.map_or("none".into(), length),
+        "position" => style.position.as_css().into(),
+        "top" => length_auto(style.inset[0]),
+        "right" => length_auto(style.inset[1]),
+        "bottom" => length_auto(style.inset[2]),
+        "left" => length_auto(style.inset[3]),
+        "z-index" => style.z_index.map_or("auto".into(), |z| z.to_string()),
+        "float" => style.float.as_css().into(),
+        "clear" => style.clear.as_css().into(),
+        "box-sizing" => style.box_sizing.as_css().into(),
+        "flex-direction" => style.flex_direction.as_css().into(),
+        "flex-wrap" => style.flex_wrap.as_css().into(),
+        "justify-content" => style.justify_content.as_css().into(),
+        "align-items" => style.align_items.as_css().into(),
+        "align-self" => style.align_self.as_css().into(),
+        "align-content" => style.align_content.as_css().into(),
+        "flex-grow" => number(style.flex_grow),
+        "flex-shrink" => number(style.flex_shrink),
+        "flex-basis" => match style.flex_basis {
+            crate::computed::ComputedFlexBasis::Content => "content".into(),
+            crate::computed::ComputedFlexBasis::Size(s) => length_auto(s),
+        },
+        "order" => style.order.to_string(),
+        "row-gap" => style.row_gap.map_or("normal".into(), length),
+        "column-gap" => style.column_gap.map_or("normal".into(), length),
         _ => {
             if let Some(s) = property.strip_prefix("margin-") {
                 length_auto(style.margin[side(s)?])

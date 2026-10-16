@@ -81,10 +81,21 @@ pub(crate) fn style_font(style: &ComputedStyle, fonts: &mut FontContext) -> Styl
 }
 
 enum Atom {
-    Word { item: usize, text: String },
-    Space { item: usize },
-    Break { item: usize },
-    Atomic { item: usize },
+    Word {
+        item: usize,
+        text: String,
+    },
+    Space {
+        item: usize,
+    },
+    /// A break opportunity without a space (after a hyphen, UAX #14 HY/BA).
+    Opportunity,
+    Break {
+        item: usize,
+    },
+    Atomic {
+        item: usize,
+    },
 }
 
 /// Geometry of an atomic inline (replaced element or control), in px.
@@ -106,23 +117,27 @@ struct AtomicBox {
 /// Sizes an atomic inline. Controls also return their shaped text, placed
 /// relative to the border box (for painting).
 fn atomic_box(
-    item: &InlineItem,
+    item: &mut InlineItem,
     cb_width: f32,
     font: &StyleFont,
-    fonts: &mut FontContext,
+    ctx: &mut LayoutContext<'_>,
 ) -> Option<(AtomicBox, Vec<(f32, GlyphRun)>)> {
     let InlineItem::Atomic {
         style,
         image,
         control,
+        block,
         ..
     } = item
     else {
         return None;
     };
+    if let Some(inner) = block {
+        return Some((inline_block_box(inner, cb_width, ctx), Vec::new()));
+    }
     let control_layout = control
         .as_ref()
-        .map(|c| crate::controls::layout_control(c, style, font, fonts, cb_width));
+        .map(|c| crate::controls::layout_control(c, style, font, ctx.fonts, cb_width));
     let (w, h) = match &control_layout {
         Some(c) => (c.width, c.height),
         None => crate::replaced::content_size(style, image.as_deref(), cb_width),
@@ -175,6 +190,55 @@ fn atomic_box(
     ))
 }
 
+/// Lays out an inline-level block container (`inline-block`,
+/// `inline-flex`) with a shrink-to-fit width. Its baseline is its last line
+/// box's (first for flex), or its bottom margin edge if it has none or does
+/// not have `overflow: visible` (CSS 2.1 §10.8.1).
+fn inline_block_box(
+    inner: &mut crate::BlockBox,
+    cb_width: f32,
+    ctx: &mut LayoutContext<'_>,
+) -> AtomicBox {
+    use rustlite_style::properties::{Display, Overflow};
+    let content_width = crate::block::shrink_to_fit_width(inner, cb_width, cb_width, ctx);
+    let o = crate::block::layout_block_inner(
+        inner,
+        cb_width,
+        None,
+        ctx,
+        false,
+        (0.0, 0.0),
+        crate::block::Forced {
+            content_width: Some(content_width),
+            content_height: None,
+        },
+    );
+    let m = inner.margin;
+    let border_width = inner.rect.width;
+    let border_height = o.height;
+    let margin_height = border_height + m.top + m.bottom;
+    let visible = inner.style.overflow_x == Overflow::Visible;
+    let baseline = if !visible {
+        None
+    } else if inner.style.display == Display::InlineFlex {
+        crate::block::first_baseline(&inner.children)
+    } else {
+        crate::block::last_baseline(&inner.children)
+    };
+    let above = baseline.map_or(margin_height, |b| {
+        m.top + inner.border.top + inner.padding.top + b
+    });
+    AtomicBox {
+        margin_width: border_width + m.left + m.right,
+        margin_height,
+        above,
+        dx: m.left,
+        dy: m.top,
+        border_width,
+        border_height,
+    }
+}
+
 fn is_collapsible(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\r' | '\x0C')
 }
@@ -189,7 +253,24 @@ fn atoms(items: &[InlineItem]) -> Vec<Atom> {
         match item {
             InlineItem::Text { text, .. } => {
                 let mut word = String::new();
-                for c in text.chars() {
+                let mut chars = text.chars().peekable();
+                while let Some(c) = chars.next() {
+                    // Lines may break after a hyphen that follows text and
+                    // precedes a letter ("shrink-|wrapped", "non--|stop"; not
+                    // "-5" or "10-20"), as browsers do (UAX #14 LB21, LB25).
+                    if matches!(c, '-' | '\u{2010}')
+                        && !word.is_empty()
+                        && chars.peek().is_some_and(|n| n.is_alphabetic())
+                    {
+                        word.push(c);
+                        out.push(Atom::Word {
+                            item: i,
+                            text: std::mem::take(&mut word),
+                        });
+                        out.push(Atom::Opportunity);
+                        prev_space = false;
+                        continue;
+                    }
                     if is_collapsible(c) {
                         if !word.is_empty() {
                             out.push(Atom::Word {
@@ -287,8 +368,22 @@ pub(crate) fn first_baseline(content: &InlineContent) -> Option<f32> {
     content.lines.first()?.fragments.first().map(|f| f.baseline)
 }
 
+/// The baseline of the last line of `content` (valid during layout).
+pub(crate) fn last_baseline(content: &InlineContent) -> Option<f32> {
+    content.lines.last()?.fragments.first().map(|f| f.baseline)
+}
+
 struct LineBuilder<'a> {
+    /// Width available to the current line (narrowed by floats).
     width: f32,
+    /// The block's content width.
+    full_width: f32,
+    /// Start of the current line, past any left floats.
+    line_left: f32,
+    line_started: bool,
+    /// The content box origin in float coordinates, and the floats to avoid.
+    origin: (f32, f32),
+    floats: Option<&'a crate::block::Floats>,
     align: TextAlign,
     strut: (f32, f32),
     fonts: &'a [StyleFont],
@@ -300,9 +395,52 @@ struct LineBuilder<'a> {
 }
 
 impl LineBuilder<'_> {
+    /// Computes the current line's free span (CSS 2.1 §9.5: line boxes next
+    /// to floats are shortened).
+    fn start_line(&mut self) {
+        if self.line_started {
+            return;
+        }
+        self.line_started = true;
+        self.line_left = 0.0;
+        self.width = self.full_width;
+        if let Some(f) = self.floats.filter(|f| !f.is_empty()) {
+            let h = self.strut.0 + self.strut.1;
+            let (l, r) = f.band(
+                self.origin.1 + self.y,
+                h,
+                self.origin.0,
+                self.origin.0 + self.full_width,
+            );
+            self.line_left = l - self.origin.0;
+            self.width = (r - l).max(0.0);
+        }
+    }
+
+    /// Moves an empty line down past floats until `w` fits beside them (or
+    /// no float narrows the line any more).
+    fn make_room(&mut self, w: f32) {
+        self.start_line();
+        while self.current.is_empty()
+            && w > self.width + 0.01
+            && self.width < self.full_width - 0.01
+        {
+            let Some(next) = self
+                .floats
+                .and_then(|f| f.next_bottom(self.origin.1 + self.y))
+            else {
+                break;
+            };
+            self.y = next - self.origin.1;
+            self.line_started = false;
+            self.start_line();
+        }
+    }
+
     /// Appends `width` of content from `item` at the pen, merging into the
     /// previous fragment when it belongs to the same item.
     fn place(&mut self, item: usize, width: f32, runs: Vec<(f32, GlyphRun)>, text: &str) {
+        self.start_line();
         let x = self.x;
         match self.current.last_mut() {
             Some(f) if f.item == item && (f.rect.right() - x).abs() < 0.001 => {
@@ -345,7 +483,7 @@ impl LineBuilder<'_> {
         .max(0.0);
         let mut fragments = std::mem::take(&mut self.current);
         for f in &mut fragments {
-            f.rect.x += shift;
+            f.rect.x += self.line_left + shift;
             f.baseline = baseline;
             if let Some(a) = self.atomics[f.item] {
                 f.rect.x += a.dx;
@@ -360,20 +498,24 @@ impl LineBuilder<'_> {
         }
         let height = above + below;
         self.lines.push(LineBox {
-            rect: RectF::new(0.0, self.y, self.width, height),
+            rect: RectF::new(self.line_left, self.y, self.width, height),
             fragments,
         });
         self.y += height;
         self.x = 0.0;
+        self.line_started = false;
     }
 }
 
-/// Lays out `content` into lines of `width` px. Returns the total height.
+/// Lays out `content` into lines of `width` px. `origin` is the content
+/// box's position among the current formatting context's floats. Returns
+/// the total height.
 pub(crate) fn layout_inline(
     content: &mut InlineContent,
     width: f32,
     block_style: &ComputedStyle,
     ctx: &mut LayoutContext<'_>,
+    origin: (f32, f32),
 ) -> f32 {
     let strut = style_font(block_style, ctx.fonts).extents();
     let fonts: Vec<StyleFont> = content
@@ -387,24 +529,28 @@ pub(crate) fn layout_inline(
         .collect();
     let mut space_widths: Vec<Option<f32>> = vec![None; content.items.len()];
     let mut atomic_runs: Vec<Vec<(f32, GlyphRun)>> = Vec::new();
-    let atomics: Vec<Option<AtomicBox>> = content
-        .items
-        .iter()
-        .zip(&fonts)
-        .map(|(i, f)| match atomic_box(i, width, f, ctx.fonts) {
+    let mut atomics: Vec<Option<AtomicBox>> = Vec::with_capacity(content.items.len());
+    for (i, f) in content.items.iter_mut().zip(&fonts) {
+        match atomic_box(i, width, f, ctx) {
             Some((b, runs)) => {
                 atomic_runs.push(runs);
-                Some(b)
+                atomics.push(Some(b));
             }
             None => {
                 atomic_runs.push(Vec::new());
-                None
+                atomics.push(None);
             }
-        })
-        .collect();
+        }
+    }
 
+    let floats = ctx.floats.last();
     let mut b = LineBuilder {
         width,
+        full_width: width,
+        line_left: 0.0,
+        line_started: false,
+        origin,
+        floats,
         align: block_style.text_align,
         strut,
         fonts: &fonts,
@@ -422,6 +568,10 @@ pub(crate) fn layout_inline(
         match &atoms[i] {
             Atom::Space { item } => {
                 pending_space = Some(*item);
+                i += 1;
+            }
+            Atom::Opportunity => {
+                // The next word group may start a new line; nothing to place.
                 i += 1;
             }
             Atom::Break { item } => {
@@ -444,11 +594,13 @@ pub(crate) fn layout_inline(
                     }
                     _ => None,
                 };
-                if has_content && b.x + space.map_or(0.0, |s| s.1) + w > width + 0.01 {
+                b.start_line();
+                if has_content && b.x + space.map_or(0.0, |s| s.1) + w > b.width + 0.01 {
                     b.finish_line();
                 } else if let Some((sp, sw)) = space {
                     b.place(sp, sw, Vec::new(), " ");
                 }
+                b.make_room(w);
                 b.place(*item, w, std::mem::take(&mut atomic_runs[*item]), "");
                 i += 1;
             }
@@ -472,11 +624,13 @@ pub(crate) fn layout_inline(
                     _ => None,
                 };
                 let space_w = space.map_or(0.0, |s| s.1);
-                if has_content && b.x + space_w + group_width > width + 0.01 {
+                b.start_line();
+                if has_content && b.x + space_w + group_width > b.width + 0.01 {
                     b.finish_line();
                 } else if let Some((item, w)) = space {
                     b.place(item, w, Vec::new(), " ");
                 }
+                b.make_room(group_width);
                 for (item, runs, w, text) in group {
                     b.place(item, w, runs, text);
                 }
@@ -501,6 +655,7 @@ mod tests {
             .map(|a| match a {
                 Atom::Word { text, .. } => text,
                 Atom::Space { .. } => "_".into(),
+                Atom::Opportunity => "/".into(),
                 Atom::Break { .. } => "|".into(),
                 Atom::Atomic { .. } => "[img]".into(),
             })

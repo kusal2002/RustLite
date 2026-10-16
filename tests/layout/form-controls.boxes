@@ -1,7 +1,7 @@
-<html> 0 0 800 185
+<html> 0 0 800 253
 <head> 0 0 0 0
 <style> 0 0 0 0
-<body> 8 8 784 161
+<body> 8 8 784 237
 <div#row1> 8 8 784 21
 <input#t> 8 8 177 21
 <input#t5> 185 8 72 21
@@ -23,3 +23,7 @@
 <button#bigb> 296.813 106 44.906 29
 <p#after> 8 151 784 18
 <input#hid> 0 0 0 0
+<div#row6> 8 185 784 60
+<input#absin> 38 190 177 21
+<button#flb> 731.531 185 60.469 21
+<input#blk> 8 185 88 21

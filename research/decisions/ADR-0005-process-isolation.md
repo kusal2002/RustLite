@@ -1,6 +1,6 @@
 # ADR-0005: Process isolation design (renderer processes per site)
 
-- Status: Proposed (design only; not implemented in Phase 9)
+- Status: Implemented on Windows (Phase 10, 2026-10-17); Linux/macOS sandboxes pending
 - Date: 2026-10-16
 
 ## Context
@@ -64,3 +64,37 @@ work (and APIs added now) do not paint us into a corner.
 - Estimated cost: IPC layer and process management first (Windows), then
   sandboxes per platform; memory overhead of ~10–20 MB per renderer
   process is expected and must be measured against the memory targets.
+
+## Implementation (Phase 10, 2026-10-17)
+
+What was built, and where it differs from the target above:
+
+- `rustlite --renderer` is the renderer: the same executable, started by
+  the browser with piped stdin/stdout. `crates/browser-core/src/ipc.rs`
+  frames messages (u32 length, 64 MiB cap) and decodes them with a
+  bounds-checked reader (lengths checked against remaining bytes, floats
+  must be finite); `remote.rs` defines the requests (load, input, scroll,
+  timers, paint, find, …) and a `State` snapshot sent back with every reply.
+- `PageHandle` is either a local `Page` or a `RemotePage`; `Tab` and the
+  window use it without knowing which. `--single-process` keeps pages in
+  the browser (debugging, tests).
+- One renderer per tab per **site**; a cross-site navigation starts a new
+  process, `about:blank` uses none.
+- **Display lists** cross the boundary (not pixels). Font faces are sent as
+  (file path, face index) and mapped only onto faces the browser already
+  indexed; anything else is dropped. Images are sent once per id.
+- **Network loads stay in the browser**: `Tab` fetches documents,
+  stylesheets, scripts and images over HTTP(S) and hands bytes to the
+  page; the renderer decodes images itself, so decoder bugs land in the
+  sandbox. **Deviation:** for a local `file:` document the renderer still
+  reads the document directory's stylesheets, scripts and images itself
+  (same document-directory rule as before), so renderers keep read access;
+  moving those reads to the browser is a follow-up.
+- **Watchdog**: a renderer that does not answer within 10 s (also the
+  total time a script can run per request), exits, or sends a malformed
+  frame is killed and replaced by a local "Page not available" page; the
+  next navigation starts a fresh renderer.
+- OS sandbox on Windows: ADR-0006.
+- Measured: three tabs = 4 processes, 64.8 MB working set in total
+  (browser 23.2 MB, renderers 10.3–16.1 MB) — within the 10–20 MB per
+  renderer estimated above.

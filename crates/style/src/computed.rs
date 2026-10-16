@@ -3,8 +3,9 @@
 use std::rc::Rc;
 
 use crate::properties::{
-    BorderStyle, BorderWidth, Display, FamilyName, FontSize, FontStyle, FontWeight, LineHeight,
-    ListStyleType, Longhand, Overflow, TextAlign, Value,
+    Align, BorderStyle, BorderWidth, BoxSizing, Clear, Display, FamilyName, FlexBasis,
+    FlexDirection, FlexWrap, Float, FontSize, FontStyle, FontWeight, LineHeight, ListStyleType,
+    Longhand, Overflow, Position, TextAlign, Value,
 };
 use crate::values::{ColorValue, Length, LengthPercentage, LengthPercentageAuto, LengthUnit, Rgba};
 
@@ -20,6 +21,13 @@ pub enum ComputedLength {
 pub enum ComputedLengthAuto {
     Length(ComputedLength),
     Auto,
+}
+
+/// Computed `flex-basis`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ComputedFlexBasis {
+    Content,
+    Size(ComputedLengthAuto),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -59,6 +67,27 @@ pub struct ComputedStyle {
     pub border_width: [f32; 4],
     pub border_style: [BorderStyle; 4],
     pub border_color: [Rgba; 4],
+    pub position: Position,
+    /// `top`, `right`, `bottom`, `left`.
+    pub inset: [ComputedLengthAuto; 4],
+    /// `None` is `auto`.
+    pub z_index: Option<i32>,
+    pub float: Float,
+    pub clear: Clear,
+    pub box_sizing: BoxSizing,
+    pub flex_direction: FlexDirection,
+    pub flex_wrap: FlexWrap,
+    pub justify_content: Align,
+    pub align_items: Align,
+    pub align_self: Align,
+    pub align_content: Align,
+    pub flex_grow: f32,
+    pub flex_shrink: f32,
+    pub flex_basis: ComputedFlexBasis,
+    pub order: i32,
+    /// `None` is `normal` (0 in flex layout).
+    pub row_gap: Option<ComputedLength>,
+    pub column_gap: Option<ComputedLength>,
 }
 
 /// Initial font size (`medium`).
@@ -101,7 +130,36 @@ impl ComputedStyle {
             border_width: [0.0; 4],
             border_style: [BorderStyle::None; 4],
             border_color: [Rgba::BLACK; 4],
+            position: Position::Static,
+            inset: [ComputedLengthAuto::Auto; 4],
+            z_index: None,
+            float: Float::None,
+            clear: Clear::None,
+            box_sizing: BoxSizing::ContentBox,
+            flex_direction: FlexDirection::Row,
+            flex_wrap: FlexWrap::Nowrap,
+            justify_content: Align::Normal,
+            align_items: Align::Normal,
+            align_self: Align::Auto,
+            align_content: Align::Normal,
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            flex_basis: ComputedFlexBasis::Size(ComputedLengthAuto::Auto),
+            order: 0,
+            row_gap: None,
+            column_gap: None,
         }
+    }
+
+    /// Positioned (anything but `static`): a containing block for
+    /// absolutely positioned descendants.
+    pub fn is_positioned(&self) -> bool {
+        self.position != Position::Static
+    }
+
+    /// Taken out of normal flow (`absolute` or `fixed`).
+    pub fn is_out_of_flow_positioned(&self) -> bool {
+        matches!(self.position, Position::Absolute | Position::Fixed)
     }
 
     /// Initial values for non-inherited properties, parent values for inherited ones.
@@ -421,7 +479,67 @@ pub fn compute(
         };
     }
 
-    if is_root {
+    simple!(position, Longhand::Position, Position);
+    simple!(float, Longhand::Float, Float);
+    simple!(clear, Longhand::Clear, Clear);
+    simple!(box_sizing, Longhand::BoxSizing, BoxSizing);
+    simple!(flex_direction, Longhand::FlexDirection, FlexDirection);
+    simple!(flex_wrap, Longhand::FlexWrap, FlexWrap);
+    simple!(justify_content, Longhand::JustifyContent, Align);
+    simple!(align_items, Longhand::AlignItems, Align);
+    simple!(align_self, Longhand::AlignSelf, Align);
+    simple!(align_content, Longhand::AlignContent, Align);
+    const INSETS: [Longhand; 4] = [
+        Longhand::Top,
+        Longhand::Right,
+        Longhand::Bottom,
+        Longhand::Left,
+    ];
+    for (i, prop) in INSETS.into_iter().enumerate() {
+        style.inset[i] = lpa(prop, parent_or_initial.inset[i], initial.inset[i]);
+    }
+    let number = |prop: Longhand, inherited: f32, init: f32| match get(prop) {
+        Resolved::Inherit => inherited,
+        Resolved::Specified(Value::Number(n)) => *n,
+        _ => init,
+    };
+    style.flex_grow = number(Longhand::FlexGrow, parent_or_initial.flex_grow, 0.0);
+    style.flex_shrink = number(Longhand::FlexShrink, parent_or_initial.flex_shrink, 1.0);
+    style.z_index = match get(Longhand::ZIndex) {
+        Resolved::Inherit => parent_or_initial.z_index,
+        Resolved::Specified(Value::Integer(z)) => *z,
+        _ => None,
+    };
+    style.order = match get(Longhand::Order) {
+        Resolved::Inherit => parent_or_initial.order,
+        Resolved::Specified(Value::Integer(Some(o))) => *o,
+        _ => 0,
+    };
+    style.flex_basis = match get(Longhand::FlexBasis) {
+        Resolved::Inherit => parent_or_initial.flex_basis,
+        Resolved::Specified(Value::FlexBasis(FlexBasis::Content)) => ComputedFlexBasis::Content,
+        Resolved::Specified(Value::FlexBasis(FlexBasis::Size(s))) => {
+            ComputedFlexBasis::Size(compute_lpa(*s, fs, ctx))
+        }
+        _ => initial.flex_basis,
+    };
+    let gap = |prop: Longhand, inherited: Option<ComputedLength>| match get(prop) {
+        Resolved::Inherit => inherited,
+        Resolved::Specified(Value::Gap(Some(v))) => Some(compute_lp(*v, fs, ctx)),
+        _ => None,
+    };
+    style.row_gap = gap(Longhand::RowGap, parent_or_initial.row_gap);
+    style.column_gap = gap(Longhand::ColumnGap, parent_or_initial.column_gap);
+
+    // CSS 2.1 §9.7: absolutely positioned boxes do not float, and floated or
+    // absolutely positioned boxes (and flex items, CSS Flexbox §4) are
+    // blockified.
+    if style.is_out_of_flow_positioned() {
+        style.float = Float::None;
+    }
+    let flex_item = !is_root
+        && parent.is_some_and(|p| matches!(p.display, Display::Flex | Display::InlineFlex));
+    if is_root || style.float != Float::None || style.is_out_of_flow_positioned() || flex_item {
         style.display = style.display.blockified();
     }
     // Overflow: `visible`/`clip` paired with a scrollable value compute to

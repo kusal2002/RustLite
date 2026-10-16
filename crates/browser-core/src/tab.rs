@@ -17,7 +17,6 @@
 //! links; `about:blank` is built in; anything else is refused.
 
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use rustlite_dom::NodeId;
@@ -26,6 +25,7 @@ use rustlite_net::{
 };
 
 use crate::Page;
+use crate::PageHandle;
 
 /// Who asked for a navigation; decides which URL schemes are allowed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,7 +78,7 @@ struct Subresource {
 /// One browsing context: a page plus navigation and history.
 #[derive(Debug)]
 pub struct Tab {
-    page: Page,
+    page: PageHandle,
     loader: Option<Arc<Loader>>,
     next_id: u64,
     pending: Option<Pending>,
@@ -193,6 +193,11 @@ impl Tab {
     /// several tabs can share one loader: route a [`LoadResult`] to the tab
     /// whose space is [`load_id_space`]`(result.id)`.
     pub fn with_id_space(page: Page, loader: Option<Arc<Loader>>, space: u32) -> Self {
+        Self::with_page(page.into(), loader, space)
+    }
+
+    /// A tab around any [`PageHandle`] (e.g. a page in a renderer process).
+    pub fn with_page(page: PageHandle, loader: Option<Arc<Loader>>, space: u32) -> Self {
         Self {
             page,
             loader,
@@ -212,11 +217,11 @@ impl Tab {
         self.loader.as_ref()
     }
 
-    pub fn page(&self) -> &Page {
+    pub fn page(&self) -> &PageHandle {
         &self.page
     }
 
-    pub fn page_mut(&mut self) -> &mut Page {
+    pub fn page_mut(&mut self) -> &mut PageHandle {
         &mut self.page
     }
 
@@ -609,19 +614,18 @@ impl Tab {
                 }
                 true
             }
-            Destination::Image => match crate::images::decode_bytes(&response.body) {
-                Ok(image) => {
-                    let image = Rc::new(image);
-                    for node in sub.nodes {
-                        self.page.set_image(node, image.clone());
-                    }
-                    true
+            Destination::Image => {
+                // Decoding happens in the page (the renderer process for
+                // remote pages): untrusted image bytes stay out of the browser.
+                let mut any = false;
+                for node in sub.nodes {
+                    any |= self.page.set_image_bytes(node, &response.body);
                 }
-                Err(e) => {
-                    tracing::warn!(url = %r.request.url, error = ?e, "image not decoded");
-                    false
+                if !any {
+                    tracing::warn!(url = %r.request.url, "image not decoded");
                 }
-            },
+                any
+            }
             Destination::Script => {
                 let allowed = crate::scripts::script_mime_allowed(response.mime.as_deref());
                 if !allowed {

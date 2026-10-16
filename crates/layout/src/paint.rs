@@ -4,7 +4,7 @@
 use rustlite_dom::NodeId;
 use rustlite_paint::{Color, DisplayItem, DisplayList};
 use rustlite_style::Rgba;
-use rustlite_style::properties::{BorderStyle, Overflow};
+use rustlite_style::properties::{BorderStyle, Overflow, Position};
 
 use crate::{BlockBox, BlockChildren, InlineContent, InlineItem, LayoutTree, LineBox, RectF};
 
@@ -56,9 +56,32 @@ pub fn paint(tree: &LayoutTree, scroll_y: f32, scale: f32, out: &mut DisplayList
     // Canvas background covers the whole viewport.
     let viewport = RectF::new(0.0, 0.0, tree.viewport.0, tree.viewport.1);
     out.fill_rect(p.device(viewport, false), bg);
-    p.block(root, out);
+    let mut deferred: Vec<&BlockBox> = Vec::new();
+    p.block(root, out, &mut deferred);
+    // Positioned boxes paint after normal flow (CSS 2.1 Appendix E,
+    // simplified): in z-index order, ties in tree order; boxes nested in a
+    // positioned box follow it. Fixed boxes ignore scrolling.
+    let fixed_painter = Painter {
+        dy: 0.0,
+        visible: (0.0, tree.viewport.1),
+        ..p
+    };
+    while !deferred.is_empty() {
+        deferred.sort_by_key(|b| b.style.z_index.unwrap_or(0));
+        let mut next = Vec::new();
+        for b in deferred {
+            let painter = if b.style.position == Position::Fixed {
+                &fixed_painter
+            } else {
+                &p
+            };
+            painter.block(b, out, &mut next);
+        }
+        deferred = next;
+    }
 }
 
+#[derive(Clone, Copy)]
 struct Painter {
     dy: f32,
     scale: f32,
@@ -82,7 +105,7 @@ impl Painter {
         RectF::new(r.x * s, (r.y + dy) * s, r.width * s, r.height * s).snapped()
     }
 
-    fn block(&self, b: &BlockBox, out: &mut DisplayList) {
+    fn block<'a>(&self, b: &'a BlockBox, out: &mut DisplayList, deferred: &mut Vec<&'a BlockBox>) {
         let clips = !matches!(b.style.overflow_x, Overflow::Visible)
             || !matches!(b.style.overflow_y, Overflow::Visible);
         let shows = self.may_show(b.rect, 0.0);
@@ -114,9 +137,13 @@ impl Painter {
             out.push_clip(self.device(b.padding_rect(), true));
         }
         match &b.children {
-            BlockChildren::Blocks(kids) => {
+            BlockChildren::Blocks(kids) | BlockChildren::Flex(kids) => {
                 for k in kids {
-                    self.block(k, out);
+                    if k.style.is_positioned() {
+                        deferred.push(k);
+                    } else {
+                        self.block(k, out, deferred);
+                    }
                 }
             }
             BlockChildren::Inline(inline) => {
@@ -124,7 +151,7 @@ impl Painter {
                     if !self.may_show(line.rect, line.rect.height) {
                         continue;
                     }
-                    self.line(inline, line, out);
+                    self.line(inline, line, out, deferred);
                 }
             }
             BlockChildren::Empty => {
@@ -142,12 +169,29 @@ impl Painter {
         if clips {
             out.pop_clip();
         }
+        deferred.extend(b.out_of_flow.iter());
     }
 
     /// Paints one line box's text and atomic inlines.
-    fn line(&self, inline: &InlineContent, line: &LineBox, out: &mut DisplayList) {
+    fn line<'a>(
+        &self,
+        inline: &'a InlineContent,
+        line: &LineBox,
+        out: &mut DisplayList,
+        deferred: &mut Vec<&'a BlockBox>,
+    ) {
         for f in &line.fragments {
             let style = match &inline.items[f.item] {
+                InlineItem::Atomic {
+                    block: Some(inner), ..
+                } => {
+                    if inner.style.is_positioned() {
+                        deferred.push(inner);
+                    } else {
+                        self.block(inner, out, deferred);
+                    }
+                    continue;
+                }
                 InlineItem::Text { style, .. } => style,
                 InlineItem::Atomic {
                     style,

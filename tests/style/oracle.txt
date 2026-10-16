@@ -8,6 +8,7 @@ font-shorthand CSS1Compat
 fonts CSS1Compat
 inheritance-and-keywords CSS1Compat
 invalid-declarations CSS1Compat
+layout-properties CSS1Compat
 lengths-and-units CSS1Compat
 pseudo-classes CSS1Compat
 specificity-and-importance CSS1Compat

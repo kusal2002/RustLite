@@ -20,12 +20,28 @@ const MAX_BLOCK_DEPTH: usize = 200;
 enum Child {
     Block(BlockBox),
     Inline(InlineItem),
+    /// Absolutely positioned or fixed: out of flow, laid out later.
+    OutOfFlow(BlockBox),
 }
 
 fn is_block_level(d: Display) -> bool {
     !matches!(
         d,
-        Display::Inline | Display::InlineBlock | Display::None | Display::Contents
+        Display::Inline
+            | Display::InlineBlock
+            | Display::InlineFlex
+            | Display::InlineGrid
+            | Display::InlineTable
+            | Display::None
+            | Display::Contents
+    )
+}
+
+/// Inline-level boxes laid out as blocks inside an atomic inline.
+fn is_inline_block_level(d: Display) -> bool {
+    matches!(
+        d,
+        Display::InlineBlock | Display::InlineFlex | Display::InlineGrid | Display::InlineTable
     )
 }
 
@@ -44,6 +60,9 @@ pub(crate) fn new_block(
         margin: Edges::default(),
         marker: None,
         replaced: None,
+        out_of_flow: Vec::new(),
+        static_index: 0,
+        static_position: (0.0, 0.0),
     }
 }
 
@@ -155,13 +174,21 @@ fn build_block(
         });
         return block;
     }
-    let mut children = Vec::new();
-    collect(inputs, node, &style, &[], depth, &mut children);
-    let content = finish_children(children, &style);
+    if let Some(kind) = doc.control_kind(node) {
+        return control_block(doc, node, style, kind);
+    }
+    let (content, out_of_flow) = if matches!(style.display, Display::Flex | Display::InlineFlex) {
+        build_flex(inputs, node, &style, depth)
+    } else {
+        let mut children = Vec::new();
+        collect(inputs, node, &style, &[], depth, &mut children);
+        finish_children(children, &style)
+    };
     let marker = (style.display == Display::ListItem)
         .then(|| marker_text(style.list_style_type, ordinal))
         .flatten();
     let mut block = new_block(Some(node), style, content);
+    block.out_of_flow = out_of_flow;
     block.marker = marker.map(|text| crate::Marker {
         text,
         x: 0.0,
@@ -169,6 +196,50 @@ fn build_block(
         runs: Vec::new(),
     });
     block
+}
+
+/// A form control that is block-level (floated, absolutely positioned or
+/// `display: block`): a shrink-wrapping block that keeps the positioning
+/// properties, holding the control as an atomic inline that keeps its box
+/// (margins, borders, padding, background, size).
+fn control_block(
+    doc: &Document,
+    node: NodeId,
+    style: Rc<ComputedStyle>,
+    kind: rustlite_dom::ControlKind,
+) -> BlockBox {
+    use rustlite_style::properties::BorderStyle;
+    use rustlite_style::{ComputedLength, ComputedLengthAuto, Rgba};
+    let zero = ComputedLength::Px(0.0);
+    let wrapper = Rc::new(ComputedStyle {
+        width: ComputedLengthAuto::Auto,
+        height: ComputedLengthAuto::Auto,
+        min_width: ComputedLengthAuto::Auto,
+        min_height: ComputedLengthAuto::Auto,
+        max_width: None,
+        max_height: None,
+        margin: [ComputedLengthAuto::Length(zero); 4],
+        padding: [zero; 4],
+        border_width: [0.0; 4],
+        border_style: [BorderStyle::None; 4],
+        background_color: Rgba::TRANSPARENT,
+        ..(*style).clone()
+    });
+    let item = InlineItem::Atomic {
+        node,
+        style,
+        image: None,
+        control: Some(crate::controls::Control::from_dom(doc, node, kind)),
+        block: None,
+    };
+    new_block(
+        Some(node),
+        wrapper,
+        BlockChildren::Inline(InlineContent {
+            items: vec![item],
+            lines: Vec::new(),
+        }),
+    )
 }
 
 /// The first list-item ordinal among `parent`'s children: `<ol start>`, else 1.
@@ -191,27 +262,128 @@ fn is_collapsible_whitespace(item: &InlineItem) -> bool {
     }
 }
 
+/// Flex container children (CSS Flexbox §4): each in-flow child element is
+/// a (blockified) flex item; contiguous text becomes an anonymous item;
+/// whitespace-only text is dropped. Items are ordered by `order`.
+fn build_flex(
+    inputs: &Inputs<'_>,
+    node: NodeId,
+    style: &Rc<ComputedStyle>,
+    depth: usize,
+) -> (BlockChildren, Vec<BlockBox>) {
+    let (doc, styles) = (inputs.doc, inputs.styles);
+    let mut items: Vec<BlockBox> = Vec::new();
+    let mut out_of_flow = Vec::new();
+    let mut text: Vec<InlineItem> = Vec::new();
+    let flush = |text: &mut Vec<InlineItem>, items: &mut Vec<BlockBox>| {
+        if !text.is_empty() && !text.iter().all(is_collapsible_whitespace) {
+            items.push(new_block(
+                None,
+                anonymous_style(style),
+                BlockChildren::Inline(InlineContent {
+                    items: std::mem::take(text),
+                    lines: Vec::new(),
+                }),
+            ));
+        }
+        text.clear();
+    };
+    for child in doc.children(node) {
+        match doc.data(child) {
+            NodeData::Text(t) => text.push(InlineItem::Text {
+                text: t.clone(),
+                style: style.clone(),
+                ancestors: Rc::from([]),
+            }),
+            NodeData::Element(_) => {
+                let Some(child_style) = styles.get_rc(child) else {
+                    continue;
+                };
+                if child_style.display == Display::None {
+                    continue;
+                }
+                if depth >= MAX_BLOCK_DEPTH {
+                    continue;
+                }
+                let b = build_block(inputs, child, child_style, depth + 1, 0);
+                if b.style.is_out_of_flow_positioned() {
+                    let mut b = b;
+                    b.static_index = items.len();
+                    out_of_flow.push(b);
+                } else {
+                    flush(&mut text, &mut items);
+                    items.push(b);
+                }
+            }
+            _ => {}
+        }
+    }
+    flush(&mut text, &mut items);
+    items.sort_by_key(|b| b.style.order);
+    let content = if items.is_empty() {
+        BlockChildren::Empty
+    } else {
+        BlockChildren::Flex(items)
+    };
+    (content, out_of_flow)
+}
+
 /// Turns a mixed child list into either inline content or blocks, wrapping
 /// inline runs between blocks in anonymous block boxes (CSS 2.1 §9.2.1.1).
-fn finish_children(children: Vec<Child>, parent_style: &Rc<ComputedStyle>) -> BlockChildren {
+/// Out-of-flow boxes are returned separately with their static index.
+fn finish_children(
+    children: Vec<Child>,
+    parent_style: &Rc<ComputedStyle>,
+) -> (BlockChildren, Vec<BlockBox>) {
+    let mut out_of_flow = Vec::new();
+    let mut in_flow = Vec::with_capacity(children.len());
+    for c in children {
+        match c {
+            Child::OutOfFlow(b) => {
+                let mut b = b;
+                // Count the block-level children before it (anonymous blocks
+                // are only known below, so this is refined there).
+                b.static_index = in_flow
+                    .iter()
+                    .filter(|c| matches!(c, Child::Block(_)))
+                    .count();
+                out_of_flow.push((in_flow.len(), b));
+            }
+            other => in_flow.push(other),
+        }
+    }
+    let children = in_flow;
     if children.iter().all(|c| matches!(c, Child::Inline(_))) {
         let items: Vec<InlineItem> = children
             .into_iter()
             .filter_map(|c| match c {
                 Child::Inline(i) => Some(i),
-                Child::Block(_) => None,
+                Child::Block(_) | Child::OutOfFlow(_) => None,
+            })
+            .collect();
+        let out_of_flow = out_of_flow
+            .into_iter()
+            .map(|(_, mut b)| {
+                b.static_index = 0;
+                b
             })
             .collect();
         if items.is_empty() || items.iter().all(is_collapsible_whitespace) {
-            return BlockChildren::Empty;
+            return (BlockChildren::Empty, out_of_flow);
         }
-        return BlockChildren::Inline(InlineContent {
-            items,
-            lines: Vec::new(),
-        });
+        return (
+            BlockChildren::Inline(InlineContent {
+                items,
+                lines: Vec::new(),
+            }),
+            out_of_flow,
+        );
     }
+    // Map each out-of-flow box's position in the child list to the number
+    // of generated block boxes before it.
+    let mut child_to_block: Vec<usize> = Vec::with_capacity(children.len() + 1);
 
-    let mut blocks = Vec::new();
+    let mut blocks: Vec<BlockBox> = Vec::new();
     let mut run: Vec<InlineItem> = Vec::new();
     let flush = |run: &mut Vec<InlineItem>, blocks: &mut Vec<BlockBox>| {
         // A run of only collapsible whitespace between blocks generates no box.
@@ -228,20 +400,32 @@ fn finish_children(children: Vec<Child>, parent_style: &Rc<ComputedStyle>) -> Bl
         run.clear();
     };
     for c in children {
+        // A pending inline run becomes one block; count it as if flushed.
+        child_to_block.push(blocks.len() + usize::from(!run.is_empty()));
         match c {
             Child::Inline(i) => run.push(i),
             Child::Block(b) => {
                 flush(&mut run, &mut blocks);
                 blocks.push(b);
             }
+            Child::OutOfFlow(_) => {}
         }
     }
     flush(&mut run, &mut blocks);
-    if blocks.is_empty() {
+    child_to_block.push(blocks.len());
+    let out_of_flow = out_of_flow
+        .into_iter()
+        .map(|(position, mut b)| {
+            b.static_index = child_to_block[position].min(blocks.len());
+            b
+        })
+        .collect();
+    let content = if blocks.is_empty() {
         BlockChildren::Empty
     } else {
         BlockChildren::Blocks(blocks)
-    }
+    };
+    (content, out_of_flow)
 }
 
 /// Anonymous boxes inherit inherited properties and use initial values for
@@ -309,6 +493,19 @@ fn collect(
                 let Some(style) = styles.get_rc(child) else {
                     continue;
                 };
+                if style.is_out_of_flow_positioned()
+                    && style.display != Display::None
+                    && depth < MAX_BLOCK_DEPTH
+                {
+                    out.push(Child::OutOfFlow(build_block(
+                        inputs,
+                        child,
+                        style,
+                        depth + 1,
+                        0,
+                    )));
+                    continue;
+                }
                 match style.display {
                     Display::None => {}
                     Display::Contents => stack.push(Frame {
@@ -323,6 +520,7 @@ fn collect(
                                 style,
                                 image: images.get(&child).cloned(),
                                 control: None,
+                                block: None,
                             }));
                             continue;
                         }
@@ -334,6 +532,18 @@ fn collect(
                                 style,
                                 image: None,
                                 control: Some(crate::controls::Control::from_dom(doc, child, kind)),
+                                block: None,
+                            }));
+                            continue;
+                        }
+                        if is_inline_block_level(d) && depth < MAX_BLOCK_DEPTH {
+                            let inner = build_block(inputs, child, style.clone(), depth + 1, 0);
+                            out.push(Child::Inline(InlineItem::Atomic {
+                                node: child,
+                                style,
+                                image: None,
+                                control: None,
+                                block: Some(Box::new(inner)),
                             }));
                             continue;
                         }

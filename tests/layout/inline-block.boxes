@@ -1,0 +1,17 @@
+<html> 0 0 800 183
+<head> 0 0 0 0
+<style> 0 0 0 0
+<body> 8 8 400 167
+<div#row1> 8 8 400 44
+<span#ib1> 19.109 28 64 24
+<span#ib2> 99.109 8 38.219 44
+<br> 127.109 12 0 17
+<div#row2> 8 52 400 34
+<span#empty> 8 52 30 30
+<div#row3> 8 86 400 29
+<span#hidden> 8 86 24 25
+<div#row4> 8 115 400 36
+<span#wide> 8 115 400 36
+<div#row5> 8 151 400 24
+<span#nested> 16 151 38.906 24
+<span#inner> 19 154 12.453 18

@@ -10,5 +10,6 @@ pub mod commands;
 pub mod findbar;
 pub mod frame;
 pub mod options;
+pub mod renderer;
 pub mod tabstrip;
 pub mod toolbar;

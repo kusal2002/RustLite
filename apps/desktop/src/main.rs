@@ -4,6 +4,23 @@ use rustlite_desktop::app;
 use rustlite_desktop::options::{Options, USAGE};
 
 fn main() -> ExitCode {
+    if std::env::args().nth(1).as_deref() == Some(rustlite_desktop::renderer::SELFTEST_SWITCH) {
+        let dir = std::env::args().nth(2).unwrap_or_else(|| ".".into());
+        rustlite_desktop::renderer::selftest(std::path::Path::new(&dir));
+        return ExitCode::SUCCESS;
+    }
+    if std::env::args().nth(1).as_deref() == Some(rustlite_desktop::renderer::RENDERER_SWITCH) {
+        if let Err(e) = rustlite_diagnostics::init_logging() {
+            eprintln!("warning: logging disabled: {e}");
+        }
+        return match rustlite_desktop::renderer::run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                tracing::error!(error = %e, "renderer stopped");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let options = match Options::parse(std::env::args().skip(1)) {
         Ok(options) => options,
         Err(e) => {

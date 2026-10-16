@@ -51,6 +51,10 @@ Performance targets are **hypotheses** until measured on a defined setup.
 | 2026-10-16 | JavaScript realm with DOM bindings | creation time / private memory | 0.7–0.9 ms / ~0.29 MB each (50 realms: 15.3 MB vs 0.7 MB) | `realm_cost` example + PowerShell `Get-Process` |
 | 2026-10-16 | `tests/pages/interactive.html` (scripts build a list, 3 listeners) | script time incl. realm / window memory after 4 clicks | 2.1 ms headless / 25.1 MB WS, 10.7 MB private | `scripts run` log; scripted mouse run |
 | 2026-10-16 | Style computation, same page (300,005 elements, 160 rules incl. UA), 800×600 | style time (3 runs) | 71.4 / 88.1 / 71.7 ms; 299,987 elements served by style sharing | `rustlite --dump-style` `style_ms` log field, release build. Best case for sharing: the page repeats one structure 20,000 times |
+| 2026-10-17 | Release binary size with advanced layout, renderer processes and sandbox (Phase 10) | bytes | 11,759,616 (11.2 MiB) | file size |
+| 2026-10-17 | Form typing and submission with the page in a sandboxed renderer | working set, browser + renderer | 22.8 MB + 14.9 MB | scripted window run, PowerShell `Get-Process` |
+| 2026-10-17 | Three tabs (`layout.html`, `sample.html`, `interactive.html`), one renderer each | processes / total working set | 4 / 64.8 MB (browser 23.2 MB; renderers 10.3, 15.2, 16.1 MB) | scripted window run, PowerShell `Get-Process`; all renderers exited with the browser |
+| 2026-10-17 | `article-400` warm layout after floats/positioning/flex support | change vs. Phase 8 baseline | about +10–20% over repeated runs (one outlier run ×1.93) | `rustlite-bench` compare; static-position tracking is skipped unless a box is out of flow |
 
 Rows above are single runs. From Phase 8 on, pipeline timings come from the
 benchmark harness below (medians of repeated runs).

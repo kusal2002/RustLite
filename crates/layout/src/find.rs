@@ -23,11 +23,10 @@ pub fn find_text(tree: &LayoutTree, fonts: &mut FontContext, query: &str) -> Vec
     }
     let mut stack: Vec<&BlockBox> = tree.root.iter().collect();
     while let Some(b) = stack.pop() {
-        match &b.children {
-            BlockChildren::Blocks(kids) => stack.extend(kids.iter().rev()),
-            BlockChildren::Inline(inline) => search(inline, fonts, &needle, &mut out),
-            BlockChildren::Empty => {}
+        if let BlockChildren::Inline(inline) = &b.children {
+            search(inline, fonts, &needle, &mut out);
         }
+        stack.extend(b.child_boxes().into_iter().rev());
     }
     out
 }

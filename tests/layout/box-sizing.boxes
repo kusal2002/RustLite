@@ -1,0 +1,10 @@
+<html> 0 0 800 206
+<head> 0 0 0 0
+<style> 0 0 0 0
+<body> 8 8 784 190
+<div#content> 8 8 130 80
+<div#border> 8 92 100 50
+<div#tiny> 8 146 20 20
+<div#maxbb> 8 170 120 5
+<div#minbb> 8 179 60 10
+<div#pctbb> 8 193 392 5

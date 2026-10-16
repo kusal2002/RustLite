@@ -1,0 +1,14 @@
+<!DOCTYPE html><!-- tolerance: 0.1 --><!-- fonts: Times New Roman; 14 3 1 -->
+<style>html { font-family: "Times New Roman" } body { margin: 8px } .f { display: flex; width: 400px; margin-bottom: 10px } .f > div { height: 20px }</style>
+<div class=f id=grow><div id=g1 style="flex: 1">a</div><div id=g2 style="flex: 2">b</div><div id=g3 style="width: 50px">c</div></div>
+<div class=f id=shrink><div id=s1 style="width: 300px">a</div><div id=s2 style="width: 300px; flex-shrink: 3">b</div></div>
+<div class=f id=just style="justify-content: space-between"><div id=j1 style="width: 50px"></div><div id=j2 style="width: 50px"></div><div id=j3 style="width: 50px"></div></div>
+<div class=f id=center style="justify-content: center; align-items: center; height: 60px"><div id=c1 style="width: 40px"></div><div id=c2 style="width: 40px; height: 40px"></div></div>
+<div class=f id=stretch style="height: 50px"><div id=st1 style="width: 40px; height: auto">stretch</div><div id=st2 style="width: 40px; align-self: flex-end">end</div></div>
+<div class=f id=wrap style="flex-wrap: wrap; gap: 5px 10px"><div id=w1 style="width: 150px"></div><div id=w2 style="width: 150px"></div><div id=w3 style="width: 150px"></div><div id=w4 style="width: 150px"></div></div>
+<div class=f id=col style="flex-direction: column; width: 200px"><div id=co1>one</div><div id=co2 style="flex-grow: 1">two</div><div id=co3 style="width: 50px; align-self: center">3</div></div>
+<div class=f id=order><div id=o1 style="order: 2; width: 30px"></div><div id=o2 style="order: 1; width: 40px"></div><div id=o3 style="width: 50px"></div></div>
+<div class=f id=auto><div id=a1 style="width: 50px"></div><div id=a2 style="width: 50px; margin-left: auto"></div></div>
+<div class=f id=rev style="flex-direction: row-reverse"><div id=r1 style="width: 50px"></div><div id=r2 style="width: 60px"></div></div>
+<div class=f id=content><div id=t1>short</div><div id=t2>a somewhat longer text item</div></div>
+<div class=f id=basis><div id=b1 style="flex: 1 1 100px"></div><div id=b2 style="flex: 1 1 200px; max-width: 150px"></div></div>

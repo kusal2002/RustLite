@@ -178,7 +178,12 @@ fn loads_document_with_stylesheet_and_image() {
     assert_eq!(t.page().title().as_deref(), Some("Page"));
 
     let p = element(&mut t, "p");
-    let (_, styles) = t.page_mut().computed_styles().unwrap();
+    let (_, styles) = t
+        .page_mut()
+        .as_local_mut()
+        .unwrap()
+        .computed_styles()
+        .unwrap();
     assert_eq!(
         rustlite_style::resolved_value(styles.get(p).unwrap(), "color").unwrap(),
         "rgb(1, 2, 3)",

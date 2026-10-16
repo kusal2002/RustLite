@@ -6,7 +6,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use rustlite_browser_core::{Initiator, NavState, Page, PageKey, Tab, load_id_space};
+use rustlite_browser_core::{
+    Initiator, NavState, Page, PageHandle, PageKey, RemotePage, Tab, load_id_space,
+};
 use rustlite_diagnostics::FrameStats;
 use rustlite_net::{LoadResult, Loader, Url};
 use rustlite_paint::{DisplayList, Point, Size};
@@ -54,6 +56,25 @@ pub enum Flow {
     Close,
 }
 
+/// How a window is set up.
+pub struct WindowConfig {
+    pub size: Size,
+    pub debug_overlay: bool,
+    pub exit_after_frames: Option<u64>,
+    pub javascript: bool,
+    /// Starts renderer processes; `None` keeps pages in the browser process.
+    pub renderer: Option<rustlite_browser_core::Spawner>,
+}
+
+impl std::fmt::Debug for WindowConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WindowConfig")
+            .field("size", &self.size)
+            .field("renderer_processes", &self.renderer.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 /// A tab plus the per-tab browser UI state.
 #[derive(Debug)]
 struct TabSlot {
@@ -99,6 +120,8 @@ pub struct BrowserWindow {
     exit_after_frames: Option<u64>,
     /// New tabs run page scripts.
     javascript: bool,
+    /// Starts renderer processes; `None` keeps pages in this process.
+    renderer: Option<rustlite_browser_core::Spawner>,
     /// When to draw the next animation frame (the active page asked for one).
     next_frame: Option<Instant>,
     /// Opened on first use; `None` until then or if the platform has none.
@@ -139,13 +162,17 @@ fn tab_title(tab: &Tab) -> String {
 impl BrowserWindow {
     pub fn new(
         event_loop: &ActiveEventLoop,
-        size: Size,
-        debug_overlay: bool,
-        exit_after_frames: Option<u64>,
         loader: Option<Arc<Loader>>,
         initial: Option<String>,
-        javascript: bool,
+        config: WindowConfig,
     ) -> Result<Self, WindowError> {
+        let WindowConfig {
+            size,
+            debug_overlay,
+            exit_after_frames,
+            javascript,
+            renderer,
+        } = config;
         let attributes = Window::default_attributes()
             .with_title("RustLite")
             .with_inner_size(PhysicalSize::new(size.width, size.height))
@@ -186,6 +213,7 @@ impl BrowserWindow {
             stats: FrameStats::new(FRAME_SAMPLES),
             exit_after_frames,
             javascript,
+            renderer,
             next_frame: None,
             clipboard: None,
         };
@@ -219,7 +247,7 @@ impl BrowserWindow {
         &mut self.tabs[self.active]
     }
 
-    fn page_mut(&mut self) -> &mut Page {
+    fn page_mut(&mut self) -> &mut PageHandle {
         self.tabs[self.active].tab.page_mut()
     }
 
@@ -227,13 +255,16 @@ impl BrowserWindow {
     fn new_slot(&mut self) -> TabSlot {
         let inner = self.window.inner_size();
         let viewport = frame::content_size(Size::new(inner.width, inner.height), &self.toolbar);
-        let mut page = Page::new(viewport);
+        let mut page: PageHandle = match &self.renderer {
+            Some(spawn) => RemotePage::new(spawn.clone(), viewport).into(),
+            None => Page::new(viewport).into(),
+        };
         page.set_device_scale(self.window.scale_factor() as f32);
         page.set_javascript_enabled(self.javascript);
         let space = self.next_space;
         self.next_space = self.next_space.wrapping_add(1);
         TabSlot {
-            tab: Tab::with_id_space(page, self.loader.clone(), space),
+            tab: Tab::with_page(page, self.loader.clone(), space),
             address: AddressBar::default(),
             find: None,
             reveal_match: false,
@@ -1006,8 +1037,7 @@ impl BrowserWindow {
         let slot = &mut self.tabs[self.active];
         let find = slot.find.as_mut()?;
         let page = slot.tab.page_mut();
-        page.layout();
-        let generation = page.layout_count();
+        let generation = page.layout_generation();
         if find.needs_search(generation) {
             let start = Instant::now();
             let matches = page.find(find.input.text());

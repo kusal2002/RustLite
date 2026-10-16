@@ -174,9 +174,9 @@ impl Page {
     /// scripts first, then the default action for form controls.
     pub fn click(&mut self, x: f32, y: f32) -> InputOutcome {
         let (scale, scroll) = (self.device_scale, self.scroll_y);
-        let target = self
-            .layout()
-            .and_then(|(_, tree)| rustlite_layout::hit_test(tree, x / scale, y / scale + scroll));
+        let target = self.layout().and_then(|(_, tree)| {
+            rustlite_layout::hit_test_scrolled(tree, x / scale, y / scale + scroll, scroll)
+        });
         let Some(target) = target else {
             self.set_focus(None);
             return InputOutcome::default();

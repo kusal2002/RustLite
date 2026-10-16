@@ -306,6 +306,36 @@ impl FontContext {
         }
     }
 
+    /// Where face `font` came from: its font file and index within it, for
+    /// naming the face to another process. `None` for faces loaded from
+    /// memory.
+    pub fn face_source(&self, font: FontId) -> Option<(std::path::PathBuf, u32)> {
+        let (db_id, _) = self.by_db_id.iter().find(|(_, f)| **f == font)?;
+        let face = self.db.face(*db_id)?;
+        match &face.source {
+            fontdb::Source::File(path) | fontdb::Source::SharedFile(path, _) => {
+                Some((path.clone(), face.index))
+            }
+            fontdb::Source::Binary(_) => None,
+        }
+    }
+
+    /// The face of this context that comes from `path` at `index`. Only
+    /// faces already in the database (installed system fonts) are found:
+    /// paths named by another process are never opened.
+    pub fn font_for_source(&mut self, path: &std::path::Path, index: u32) -> Option<FontId> {
+        let id = self
+            .db
+            .faces()
+            .find(|f| {
+                f.index == index
+                    && matches!(&f.source,
+                        fontdb::Source::File(p) | fontdb::Source::SharedFile(p, _) if p == path)
+            })?
+            .id;
+        self.load(id)
+    }
+
     fn load(&mut self, id: fontdb::ID) -> Option<FontId> {
         if let Some(&fid) = self.by_db_id.get(&id) {
             return Some(fid);

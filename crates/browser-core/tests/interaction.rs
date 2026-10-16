@@ -234,11 +234,11 @@ fn demo_page_form_works_through_a_tab() {
     let page = Page::with_fonts(Size::new(800, 822), FontContext::with_system_fonts());
     let mut t = rustlite_browser_core::Tab::new(page, None);
     t.navigate(&path.to_string_lossy()).unwrap();
-    let (x, y) = center(t.page_mut(), "name");
+    let (x, y) = center(t.page_mut().as_local_mut().unwrap(), "name");
     assert!(t.click(x, y).consumed);
     for c in ["O", "k"] {
         t.key_down(&PageKey::Text(c.into()));
         t.key_up(&PageKey::Text(c.into()));
     }
-    assert_eq!(value(t.page_mut(), "name"), "Ok");
+    assert_eq!(value(t.page_mut().as_local_mut().unwrap(), "name"), "Ok");
 }

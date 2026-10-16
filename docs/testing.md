@@ -45,6 +45,18 @@ APIs: focusing and typing, caret keys, Tab order, toggles and radio groups,
 GET submission URLs, script-visible events and their order, and the
 `tests/pages/interactive.html` demo end to end.
 
+## Renderer process and sandbox tests
+
+`apps/desktop/tests/renderer.rs` runs the real `rustlite` binary as a
+renderer: a page in a renderer process (scripts, timers, clicks, typing,
+find, same-site vs. cross-site process reuse), a hung renderer killed by
+the watchdog, a renderer sending garbage, and the Windows sandbox
+self-test (`--renderer-selftest <dir>`: low integrity, in a job, file
+write denied, process start denied, reads allowed). On Linux and macOS
+the self-test checks that lockdown reports "not sandboxed".
+`crates/browser-core` has unit tests for IPC framing and message decoding
+(truncated, oversized and non-finite input).
+
 ## Fuzzing
 
 `cargo test -p rustlite-browser-core --test fuzz` runs seeded mutation

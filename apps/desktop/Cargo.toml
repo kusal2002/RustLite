@@ -20,6 +20,7 @@ rustlite-net.workspace = true
 rustlite-fonts.workspace = true
 rustlite-paint.workspace = true
 rustlite-renderer.workspace = true
+rustlite-sandbox.workspace = true
 rustlite-style.workspace = true
 softbuffer.workspace = true
 thiserror.workspace = true

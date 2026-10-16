@@ -2,7 +2,7 @@
 //!
 //! Shared by the windowed path and `--headless`, so both render identically.
 
-use rustlite_browser_core::Page;
+use rustlite_browser_core::PageHandle;
 use rustlite_paint::{Color, DisplayItem, DisplayList, Rect, Size};
 
 use crate::toolbar::ToolbarLayout;
@@ -31,9 +31,9 @@ pub fn compose(
     out: &mut DisplayList,
     window: Size,
     content_top: u32,
-    page: &mut Page,
+    page: &mut PageHandle,
     debug_overlay: bool,
-    chrome: impl FnOnce(&mut DisplayList, &mut Page, Rect),
+    chrome: impl FnOnce(&mut DisplayList, &mut PageHandle, Rect),
 ) {
     out.clear();
     let content = content_rect(window, content_top);
@@ -66,11 +66,12 @@ pub fn compose(
 mod tests {
     use super::*;
     use crate::toolbar::ToolbarView;
+    use rustlite_browser_core::Page;
     use rustlite_renderer::{Framebuffer, rasterize};
 
-    fn render(window: Size, debug_overlay: bool) -> (Framebuffer, ToolbarLayout, Page) {
+    fn render(window: Size, debug_overlay: bool) -> (Framebuffer, ToolbarLayout, PageHandle) {
         let toolbar = ToolbarLayout::new(window.width, 1.0);
-        let mut page = Page::new(content_size(window, &toolbar));
+        let mut page: PageHandle = Page::new(content_size(window, &toolbar)).into();
         let mut list = DisplayList::new();
         compose(
             &mut list,

@@ -36,6 +36,17 @@ impl NodeId {
     pub fn index(self) -> usize {
         self.0.get() as usize - 1
     }
+
+    /// The id's raw value, for passing a node reference between processes.
+    pub fn to_raw(self) -> u32 {
+        self.0.get()
+    }
+
+    /// Rebuilds an id from [`NodeId::to_raw`]; `None` for 0. The id may not
+    /// name a node of any particular document: callers look it up.
+    pub fn from_raw(raw: u32) -> Option<Self> {
+        NonZeroU32::new(raw).map(Self)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]

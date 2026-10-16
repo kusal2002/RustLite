@@ -2,14 +2,20 @@
 # device-pixel-ratio: 1
 body-and-html-margins CSS1Compat
 box-model CSS1Compat
+box-sizing CSS1Compat
 display-none-and-contents CSS1Compat
 document-defaults CSS1Compat
+flexbox CSS1Compat
+floats CSS1Compat
 form-controls CSS1Compat
+hyphen-breaks CSS1Compat
 images-block CSS1Compat
 images-inline CSS1Compat
+inline-block CSS1Compat
 inline-elements CSS1Compat
 margin-collapsing CSS1Compat
 min-max-sizes CSS1Compat
+positioning CSS1Compat
 text-lines CSS1Compat
 text-wrapping CSS1Compat
 whitespace CSS1Compat

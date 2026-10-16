@@ -1,13 +1,61 @@
 # Security
 
 **RustLite loads untrusted content from the network and runs its
-JavaScript, but it is a single-process prototype without sandboxing. It is
-not safe for browsing untrusted sites with sensitive data on the machine.**
-Parsers, decoders, layout and the JavaScript engine (Boa) all process
-attacker-controlled input in the browser process, with the user's
-privileges. `--disable-javascript` turns scripting off. The planned process
-split and OS sandboxes are designed in
-[ADR-0005](../research/decisions/ADR-0005-process-isolation.md).
+JavaScript. Pages run in separate renderer processes; on Windows those are
+sandboxed, on Linux and macOS they are not yet. It is a prototype: do not
+rely on it for browsing untrusted sites with sensitive data on the
+machine.** `--disable-javascript` turns scripting off. Design:
+[ADR-0005](../research/decisions/ADR-0005-process-isolation.md) (process
+split) and [ADR-0006](../research/decisions/ADR-0006-sandbox-crate-scoped-unsafe.md)
+(sandbox).
+
+## Process isolation (PROC-001)
+
+- Each tab's page (HTML/CSS parsing, style, layout, paint, JavaScript,
+  image decoding) runs in a renderer process, `rustlite --renderer`, one per
+  tab per site; cross-site navigation starts a new process. The browser
+  process keeps the window, UI, navigation decisions, history, network
+  stack, HTTP cache and clipboard.
+- IPC is stdin/stdout with length-prefixed frames (≤64 MiB). The browser
+  decodes every renderer message as hostile: bounds-checked lengths, finite
+  floats, display-list fonts accepted only as faces the browser already
+  indexed, image sizes capped at 16384 px a side.
+- **Watchdog:** a renderer that does not reply within 10 s, exits or sends
+  a malformed frame is killed; the tab shows a local "Page not available"
+  page and the next navigation gets a new renderer. This is also the total
+  time scripts can run per request (the in-process gap of Phase 9).
+- `--single-process` puts pages back in the browser process (debugging
+  only; no isolation).
+
+## OS sandbox (SANDBOX-001)
+
+Windows (verified by `apps/desktop/tests/renderer.rs`, which runs the real
+binary in its sandbox):
+
+- **Job object per renderer:** 1 GiB committed-memory cap, no child
+  processes (`ActiveProcessLimit = 1`), killed when the browser exits or
+  crashes, immediate exit on unhandled exceptions, no clipboard, desktop
+  switching, global atoms, other processes' window handles, system
+  parameters or display settings.
+- **Renderer lockdown** before it reads any input: low integrity level
+  (cannot write the user's files, registry or medium-integrity processes),
+  all privileges disabled, no dynamic code, no DLLs from remote or
+  low-integrity locations.
+- The `unsafe` needed for these Win32 calls lives only in
+  `crates/sandbox/src/windows.rs`, one documented call per block; all other
+  crates forbid `unsafe` (ADR-0006).
+
+**Gaps:**
+
+- Renderers can still **read** files the user can read and could open
+  **network** connections; RustLite's renderer code does neither for web
+  pages, but the OS does not prevent it. Local `file:` documents read their
+  own directory's subresources from the renderer. AppContainer (which
+  removes both) is the next step.
+- **Linux and macOS:** renderer processes, watchdog and memory isolation
+  by process, but no OS sandbox yet (seccomp + namespaces, `sandbox_init`).
+- No per-renderer heap limit inside Boa: the 1 GiB job cap ends the
+  renderer instead (Windows only).
 
 ## JavaScript (SCRIPT-001)
 
@@ -28,8 +76,9 @@ split and OS sandboxes are designed in
 - The page's DOM is lent to the engine only during a call; no shared
   mutable state, no `unsafe` in our bindings.
 - Limits: 10,000,000 iterations per loop and call depth 400; a stopped
-  script reports an error. **Gaps:** no total time limit (many short loops
-  can still run long) and no heap limit; both need process isolation.
+  script reports an error. The renderer watchdog (10 s per request) bounds
+  total script time and the job object bounds memory on Windows; in
+  `--single-process` mode neither applies.
 - Scripts inserted through `innerHTML` do not run; modules are not run;
   `javascript:` URLs stay blocked.
 - External scripts load only over `http(s)` (or from a local document's own
@@ -89,9 +138,10 @@ and the CSS parser alone are not yet fuzzed separately.
 
 ## Not yet done (required before RustLite is suitable for general browsing)
 
-1. Process isolation and OS sandboxes (designed in ADR-0005, not built).
-2. A total script time limit and heap limit (need isolation or an engine
-   interrupt hook).
+1. OS sandboxes on Linux and macOS; AppContainer on Windows (no file
+   reads or network for renderers).
+2. A graceful script timeout (today a hung script costs the whole
+   renderer, after 10 s) and a heap limit outside Windows.
 3. CORS and CSP. Same-origin rules matter once scripts can fetch or read
    cross-origin data; today scripts cannot fetch, and cross-origin images,
    stylesheets and scripts load as they do in browsers.

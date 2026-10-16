@@ -36,7 +36,8 @@ Review every capture for credentials, tokens and personal data before committing
 - [ADR-0002](decisions/ADR-0002-font-stack.md) — Font stack: fontdb + rustybuzz (+ fontdue, superseded by ADR-0003).
 - [ADR-0003](decisions/ADR-0003-own-glyph-rasterizer.md) — On-demand glyph rasterizer replaces fontdue (73.6 → 23.9 MB).
 - [ADR-0004](decisions/ADR-0004-javascript-engine-boa.md) — Boa as the JavaScript engine; DOM lent to the engine, unforgeable wrappers.
-- [ADR-0005](decisions/ADR-0005-process-isolation.md) — Process isolation design (proposed): renderer per site, OS sandboxes.
+- [ADR-0005](decisions/ADR-0005-process-isolation.md) — Process isolation: renderer process per site, watchdog, OS sandboxes (implemented on Windows).
+- [ADR-0006](decisions/ADR-0006-sandbox-crate-scoped-unsafe.md) — `rustlite-sandbox`: the one crate allowed `unsafe`, via `windows-sys`; job object + low integrity.
 - [HTML-001](specifications/HTML-001.md) — HTML parsing; 32/32 fixtures match Chromium 152.
 - [CSS-001](specifications/CSS-001.md) — CSS parsing, cascade, computed values; 11/11 fixtures match Chromium 152.
 - [LAYOUT-001](specifications/LAYOUT-001.md) — Block and inline layout; 9/9 fixtures within 0.032px of Chromium 152.
