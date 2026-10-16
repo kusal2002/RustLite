@@ -420,6 +420,44 @@ impl Document {
         true
     }
 
+    /// Removes an attribute. Returns whether it was present.
+    pub fn remove_attribute(&mut self, id: NodeId, name: &str) -> bool {
+        let NodeData::Element(e) = &mut self.node_mut(id).data else {
+            return false;
+        };
+        let before = e.attrs.len();
+        e.attrs.retain(|a| &*a.name != name);
+        let removed = e.attrs.len() != before;
+        if removed {
+            self.generation += 1;
+        }
+        removed
+    }
+
+    /// DOM `textContent` setter: text and comment nodes get new data;
+    /// elements and fragments lose their children and get one text child
+    /// (none for empty text). Document and doctype nodes are unchanged.
+    pub fn set_text_content(&mut self, id: NodeId, text: &str) {
+        match &mut self.node_mut(id).data {
+            NodeData::Text(t) | NodeData::Comment(t) => {
+                *t = text.to_owned();
+                self.generation += 1;
+            }
+            NodeData::Element(_) => {
+                while let Some(child) = self.first_child(id) {
+                    self.detach(child);
+                }
+                if !text.is_empty() {
+                    let t = self.create_text(text);
+                    // `id` is an element and `t` a fresh leaf: cannot fail.
+                    let _ = self.append_child(id, t);
+                }
+                self.generation += 1;
+            }
+            NodeData::Document | NodeData::Doctype { .. } => {}
+        }
+    }
+
     /// Sets (or replaces) an attribute value. No-op for non-elements.
     pub fn set_attribute(&mut self, id: NodeId, name: &str, value: impl Into<String>) {
         let NodeData::Element(e) = &mut self.node_mut(id).data else {

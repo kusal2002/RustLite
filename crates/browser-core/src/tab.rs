@@ -446,6 +446,17 @@ impl Tab {
         }
     }
 
+    /// A failed script must still be marked, so later scripts can run.
+    fn subresource_failed(&mut self, sub: &Subresource) -> bool {
+        if sub.destination != Destination::Script {
+            return false;
+        }
+        for &node in &sub.nodes {
+            self.page.set_script_source(node, None);
+        }
+        true
+    }
+
     /// Applies a finished load. Returns true if the page changed and should
     /// be redrawn. Results for superseded navigations or documents are
     /// ignored.
@@ -507,11 +518,11 @@ impl Tab {
             Ok(resp) if (200..300).contains(&resp.status) => resp,
             Ok(resp) => {
                 tracing::warn!(url = %r.request.url, status = resp.status, "subresource failed");
-                return false;
+                return self.subresource_failed(&sub);
             }
             Err(e) => {
                 tracing::warn!(url = %r.request.url, error = %e, "subresource failed");
-                return false;
+                return self.subresource_failed(&sub);
             }
         };
         match sub.destination {
@@ -536,6 +547,19 @@ impl Tab {
                     false
                 }
             },
+            Destination::Script => {
+                let allowed = crate::scripts::script_mime_allowed(response.mime.as_deref());
+                if !allowed {
+                    tracing::warn!(url = %r.request.url, mime = ?response.mime, "script refused: wrong MIME type");
+                }
+                let text = allowed.then(|| {
+                    rustlite_net::decode_text(&response.body, response.charset.as_deref()).text
+                });
+                for node in sub.nodes {
+                    self.page.set_script_source(node, text.clone());
+                }
+                true
+            }
             Destination::Document => false,
         }
     }

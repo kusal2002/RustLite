@@ -31,13 +31,14 @@ pub enum Destination {
     Document,
     Style,
     Image,
+    Script,
 }
 
 impl Destination {
     pub fn max_body_bytes(self) -> u64 {
         match self {
             Destination::Document => 16 * 1024 * 1024,
-            Destination::Style => 4 * 1024 * 1024,
+            Destination::Style | Destination::Script => 4 * 1024 * 1024,
             Destination::Image => 32 * 1024 * 1024,
         }
     }
@@ -47,6 +48,7 @@ impl Destination {
             Destination::Document => "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
             Destination::Style => "text/css,*/*;q=0.1",
             Destination::Image => "image/png,image/jpeg,image/gif,image/*;q=0.8,*/*;q=0.5",
+            Destination::Script => "*/*",
         }
     }
 }

@@ -94,6 +94,8 @@ pub struct BrowserWindow {
     frame_list: DisplayList,
     stats: FrameStats,
     exit_after_frames: Option<u64>,
+    /// New tabs run page scripts.
+    javascript: bool,
     /// Opened on first use; `None` until then or if the platform has none.
     clipboard: Option<arboard::Clipboard>,
 }
@@ -137,6 +139,7 @@ impl BrowserWindow {
         exit_after_frames: Option<u64>,
         loader: Option<Arc<Loader>>,
         initial: Option<String>,
+        javascript: bool,
     ) -> Result<Self, WindowError> {
         let attributes = Window::default_attributes()
             .with_title("RustLite")
@@ -177,6 +180,7 @@ impl BrowserWindow {
             frame_list: DisplayList::new(),
             stats: FrameStats::new(FRAME_SAMPLES),
             exit_after_frames,
+            javascript,
             clipboard: None,
         };
         let slot = this.new_slot();
@@ -219,6 +223,7 @@ impl BrowserWindow {
         let viewport = frame::content_size(Size::new(inner.width, inner.height), &self.toolbar);
         let mut page = Page::new(viewport);
         page.set_device_scale(self.window.scale_factor() as f32);
+        page.set_javascript_enabled(self.javascript);
         let space = self.next_space;
         self.next_space = self.next_space.wrapping_add(1);
         TabSlot {
@@ -774,9 +779,20 @@ impl BrowserWindow {
 
     /// Follows the link under `point`, in a new background tab if `new_tab`.
     fn click_link(&mut self, point: Point, new_tab: bool) -> Flow {
-        let link = self
-            .content_point(point)
-            .and_then(|(x, y)| self.page_mut().link_at(x, y));
+        let Some((x, y)) = self.content_point(point) else {
+            return Flow::Continue;
+        };
+        // Page scripts see plain left clicks first and may cancel them
+        // (e.g. links handled by script) or change the page.
+        if !new_tab {
+            let cancelled = self.page_mut().dispatch_click(x, y);
+            // Scripts may have changed the title or the content.
+            self.sync_chrome();
+            if cancelled {
+                return Flow::Continue;
+            }
+        }
+        let link = self.page_mut().link_at(x, y);
         let Some(url) = link else {
             return Flow::Continue;
         };

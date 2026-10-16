@@ -42,6 +42,15 @@ I/O.
 | Loader queue | 64 pending requests; more are refused |
 | Workers | 4 threads |
 
+## Subresource policy
+
+All subresource URLs go through one function (`subresource_url` in
+`browser-core`): only `http:`/`https:`, and an `https:` document loads no
+`http:` subresources (mixed content blocked). Scripts are fetched with
+`Destination::Script` (4 MiB limit) and refused if the response is an image,
+audio, video or CSV type. A blocked or failed script is skipped so the
+remaining scripts still run.
+
 ## Content types
 
 `text/html` and `application/xhtml+xml` render as HTML; other `text/*` and JSON

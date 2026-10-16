@@ -32,3 +32,41 @@ pub use stylist::{
     stylist_for, stylist_with_external,
 };
 pub use values::Rgba;
+
+use rustlite_css::SelectorList;
+use rustlite_dom::{Document, NodeData, NodeId};
+
+/// Parses a selector list as `querySelector`/`matches` accept it; `None`
+/// for invalid or unsupported selectors (scripts get a `SyntaxError`).
+pub fn parse_selectors(text: &str) -> Option<SelectorList> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    // Reuse the stylesheet parser: exactly one rule must come out, so input
+    // like `a {} b` cannot smuggle in a second rule.
+    let sheet = rustlite_css::parse_stylesheet(&format!("{text}{{}}"));
+    if sheet.rules.len() != 1 || sheet.dropped_rules != 0 || sheet.skipped_at_rules != 0 {
+        return None;
+    }
+    sheet.rules.into_iter().next().map(|r| r.selectors)
+}
+
+/// Does element `el` match any selector in `list`?
+pub fn element_matches(doc: &Document, list: &SelectorList, el: NodeId) -> bool {
+    if !matches!(doc.data(el), NodeData::Element(_)) {
+        return false;
+    }
+    let ctx = matching::MatchContext {
+        doc,
+        quirks: doc.quirks_mode() == rustlite_dom::QuirksMode::Quirks,
+    };
+    list.0.iter().any(|sel| matching::matches(ctx, sel, el))
+}
+
+/// Elements under `root` (exclusive) matching `list`, in tree order.
+pub fn query_selector_all(doc: &Document, root: NodeId, list: &SelectorList) -> Vec<NodeId> {
+    doc.descendants(root)
+        .skip(1)
+        .filter(|&n| element_matches(doc, list, n))
+        .collect()
+}

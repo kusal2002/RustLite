@@ -45,6 +45,9 @@ Performance targets are **hypotheses** until measured on a defined setup.
 | 2026-10-16 | Three tabs (two with tests/pages/sample.html, one blank), find bar used | working set | 29.1 MB | PowerShell `Get-Process`; tabs share one font context |
 | 2026-10-16 | Phase 8 build: sample page, then three tabs | working set / private bytes | 28.8 / 16.0 MB → 29.3 / 16.5 MB | PowerShell `Get-Process`, scripted run |
 | 2026-10-16 | Release binary size (Phase 8) | bytes | 4,908,032 (4.7 MiB) | file size |
+| 2026-10-16 | Release binary size with Boa (Phase 9) | bytes | 11,310,592 (10.8 MiB) | file size |
+| 2026-10-16 | JavaScript realm with DOM bindings | creation time / private memory | 0.7–0.9 ms / ~0.29 MB each (50 realms: 15.3 MB vs 0.7 MB) | `realm_cost` example + PowerShell `Get-Process` |
+| 2026-10-16 | `tests/pages/interactive.html` (scripts build a list, 3 listeners) | script time incl. realm / window memory after 4 clicks | 2.1 ms headless / 25.1 MB WS, 10.7 MB private | `scripts run` log; scripted mouse run |
 | 2026-10-16 | Style computation, same page (300,005 elements, 160 rules incl. UA), 800×600 | style time (3 runs) | 71.4 / 88.1 / 71.7 ms; 299,987 elements served by style sharing | `rustlite --dump-style` `style_ms` log field, release build. Best case for sharing: the page repeats one structure 20,000 times |
 
 Rows above are single runs. From Phase 8 on, pipeline timings come from the

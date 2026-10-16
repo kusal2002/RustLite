@@ -18,6 +18,7 @@ Options:
   --dump-style <HTML_FILE>  Print computed styles of a local HTML file (viewport = --size)
   --dump-layout <HTML_FILE> Print element border boxes after layout (viewport = --size)
   --debug-overlay           Start with the paint debug overlay enabled
+  --disable-javascript      Do not run page scripts
   -h, --help                Print this help
 ";
 
@@ -30,6 +31,8 @@ pub struct Options {
     pub dump_layout: Option<PathBuf>,
     pub exit_after_frames: Option<u64>,
     pub debug_overlay: bool,
+    /// Run page scripts (`--disable-javascript` clears it).
+    pub javascript: bool,
     pub help: bool,
     /// Local HTML file to open (named explicitly by the user).
     pub open: Option<PathBuf>,
@@ -45,6 +48,7 @@ impl Default for Options {
             dump_layout: None,
             exit_after_frames: None,
             debug_overlay: false,
+            javascript: true,
             help: false,
             open: None,
         }
@@ -76,6 +80,7 @@ impl Options {
             match arg.as_str() {
                 "-h" | "--help" => opts.help = true,
                 "--debug-overlay" => opts.debug_overlay = true,
+                "--disable-javascript" => opts.javascript = false,
                 "--size" => {
                     let value = args.next().ok_or(OptionsError::MissingValue("--size"))?;
                     opts.size = parse_size(&value)?;
@@ -188,8 +193,11 @@ mod tests {
             "--exit-after-frames",
             "3",
             "--debug-overlay",
+            "--disable-javascript",
         ])
         .unwrap();
+        assert!(!o.javascript);
+        assert!(Options::default().javascript);
         assert_eq!(o.size, Size::new(640, 480));
         assert_eq!(o.headless_output, Some(PathBuf::from("out.png")));
         assert_eq!(o.exit_after_frames, Some(3));

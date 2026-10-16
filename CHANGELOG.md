@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added — 2026-10-16 (Phase 9)
+- JavaScript via Boa 0.22 (`rustlite-script`): classic inline and external
+  scripts run after parsing in document order, then `DOMContentLoaded` and
+  `load`; a DOM subset (queries, tree mutation, attributes, `classList`,
+  `innerHTML`, `textContent`, title); click events with bubbling,
+  `preventDefault` and `on*` handlers; `console`; loop and recursion limits.
+- Mouse clicks reach page listeners before link navigation;
+  `--disable-javascript`.
+- `tests/pages/interactive.html` scripting demo.
+- Mixed-content blocking for `https:` pages; external scripts refused when
+  served as image/audio/video/CSV.
+- Seeded mutation fuzzing (`crates/browser-core/tests/fuzz.rs`) in CI.
+- ADR-0004 (JavaScript engine) and ADR-0005 (process isolation design).
+
 ### Added — 2026-10-16 (Phase 8)
 - `rustlite-bench`: per-stage pipeline benchmarks with baseline save and
   compare; reference baseline in `benchmarks/`; CI smoke run.

@@ -38,6 +38,13 @@ a local HTTP server on `127.0.0.1` inside the test process; CI needs no
 external network. Certificate validation was checked manually against
 badssl.com (see NET-001); an offline TLS test with a test CA is a gap.
 
+## Fuzzing
+
+`cargo test -p rustlite-browser-core --test fuzz` runs seeded mutation
+fuzzing (HTML parser tree invariants, whole pipeline, DOM bindings). Raise
+`RUSTLITE_FUZZ_ITERS` and vary `RUSTLITE_FUZZ_SEED` locally (use
+`--release`); failing inputs land in `target/fuzz-failures/`.
+
 ## Benchmarks
 
 `cargo run --release -p rustlite-bench` prints per-stage medians;

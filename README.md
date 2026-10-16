@@ -3,12 +3,13 @@
 An original, cross-platform web browser engine written in Rust: HTML, DOM, CSS,
 layout, paint and rendering are RustLite code, not a wrapped engine.
 
-**Status:** Phase 7. RustLite browses: it loads pages over HTTP(S) with
+**Status:** Phase 9. RustLite browses: it loads pages over HTTP(S) with
 certificate validation, follows links, keeps history, has tabs and
-find-in-page, and renders with its own
+find-in-page, runs page JavaScript (Boa engine, a DOM subset and click
+events), and renders with its own
 HTML parser, CSS engine, block/inline layout, glyph rasterizer and CPU renderer
 (each verified against Chromium on golden fixtures). Normal flow only; no
-floats, flex/grid or JavaScript yet, and no sandbox: see
+floats or flex/grid yet, and no sandbox: see
 [docs/security.md](docs/security.md) before browsing untrusted sites. See [docs/roadmap.md](docs/roadmap.md) and
 [docs/progress.md](docs/progress.md).
 
@@ -27,6 +28,7 @@ Options:
 --headless <PNG>          Render one frame to a PNG without a window
 --exit-after-frames <N>   Close after N frames (smoke test)
 --debug-overlay           Outline every painted rectangle (toggle: F12)
+--disable-javascript      Do not run page scripts
 --dump-dom <HTML_FILE>    Print the parsed DOM of a local file (html5lib format)
 --dump-style <HTML_FILE>  Print computed styles of a local file (viewport = --size)
 --dump-layout <HTML_FILE> Print element boxes after layout (viewport = --size)

@@ -1,0 +1,18 @@
+[package]
+name = "rustlite-script"
+description = "JavaScript for RustLite: the Boa engine bound to a subset of the DOM."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+boa_engine.workspace = true
+rustlite-css.workspace = true
+rustlite-dom.workspace = true
+rustlite-html.workspace = true
+rustlite-style.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

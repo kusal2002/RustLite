@@ -41,6 +41,8 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | PERF-001 | Benchmark harness, baseline and regression compare | Tested | `rustlite-bench` unit tests; baseline file; CI smoke run |
 | PERF-002 | Shaping face cache, word shaping cache, attribute bucket, ancestor key filter, viewport-culled paint | Tested | style golden fixtures still 12/12; `ancestor_filter_keeps_every_true_match`; `paint_emits_only_what_the_viewport_can_show` |
 | PERF-003 | Memory report per subsystem; bounded HTTP subresource cache; restyle on resize only with viewport units | Tested | `memory_report_covers_each_subsystem`; cache unit tests and `cacheable_subresources_are_reused_until_reload`; `resize_restyles_only_viewport_dependent_documents` |
+| SCRIPT-001 | JavaScript (Boa): classic scripts in order, DOM subset, click events, `on*` handlers, limits | Tested | `rustlite-script` unit tests; page tests; `external_scripts_run_in_document_order`; scripted windowed clicks on `tests/pages/interactive.html` |
+| SEC-002 | Mixed-content blocking; script MIME refusal; seeded fuzzing in CI; isolation ADR | Tested | `https_pages_do_not_load_http_subresources`; `fuzz.rs` (3 targets); ADR-0005 |
 | CSS-002 | `font` shorthand, `min-/max-width/height`, `light-dark()` | Verified on reference browser (fixture set) | `font-shorthand` style and `min-max-sizes` layout fixtures match Chromium 152 |
 | JS-001 | JS runtime | Deferred (Phase 9) | — |
 
@@ -48,7 +50,7 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 | Platform | Build | Tests | Window | Notes |
 |---|---|---|---|---|
-| Windows 11 x64 (MSVC) | ✅ | ✅ 252/252 | ✅ | Ryzen 5 5600G, Radeon iGPU |
+| Windows 11 x64 (MSVC) | ✅ | ✅ 270/270 | ✅ | Ryzen 5 5600G, Radeon iGPU |
 | Linux x64 | ✅ CI | ✅ CI (run 38864693788) | Unverified | No display in CI; text layout goldens skip (no Times New Roman) |
 | macOS | ✅ CI | ✅ CI (run 38864693788) | Unverified | Layout text goldens pin Times New Roman and skip if its metrics differ from the reference machine |
 
@@ -227,3 +229,30 @@ Tested · Verified on reference browser · Blocked · Deferred.
   HTTP revalidation and heuristic freshness.
 - **Next:** Phase 9 prerequisites (process-isolation ADR, same-origin policy
   for subresources, parser fuzzing) before a JavaScript engine.
+
+### 2026-10-16 — Phase 9: JavaScript (Boa) and first DOM APIs
+
+- **What:** `rustlite-script` binds Boa 0.22 to a DOM subset (see
+  [compatibility.md](compatibility.md#javascript-script-001)); scripts run
+  after parsing in document order, then `DOMContentLoaded`/`load`; mouse
+  clicks are dispatched to page listeners first and `preventDefault` stops
+  link navigation; DOM changes restyle and relayout the page;
+  `--disable-javascript`. Prerequisites: mixed-content blocking, script MIME
+  refusal, seeded mutation fuzzing in CI, ADR-0004 (engine) and ADR-0005
+  (process isolation design).
+- **Design:** the page's DOM is lent to the engine per call; wrappers map to
+  nodes by object identity, so no `unsafe` and no forgeable references.
+- **Engine choice:** Boa, confirmed with the user before adding the
+  dependency.
+- **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 270 passed
+  · release build ✅ · 36,000 extra release fuzz cases, no failures ·
+  windowed run with real mouse clicks: counter, task toggle, cancelled link,
+  title updates.
+- **Measurements:** binary 4.7 → 10.8 MiB; a realm costs ~0.29 MB private
+  memory and 0.7–0.9 ms; the interactive page runs its scripts in 2.1 ms
+  (headless) and the window uses 25.1 MB working set.
+- **Not done / gaps:** timers, `fetch`, style objects, form controls and
+  keyboard events; no total script time or heap limit; scripts run in the
+  browser process (isolation designed, not built).
+- **Next:** Phase 10 candidates: timers and an event loop, forms and
+  keyboard input, then the process split (ADR-0005).

@@ -8,6 +8,7 @@
 //! and error pages.
 
 pub mod images;
+mod scripts;
 mod tab;
 
 pub use tab::{
@@ -44,6 +45,7 @@ pub struct HtmlDocument {
     /// The current styles used viewport units (see [`Page::set_viewport`]).
     styles_use_viewport: bool,
     layout: Option<LayoutTree>,
+    scripts: scripts::Scripts,
 }
 
 /// What a page currently shows.
@@ -133,6 +135,8 @@ pub struct Page {
     /// Created on first layout of an HTML document (loading system fonts is
     /// not free), unless supplied with [`Page::with_fonts`].
     fonts: Option<FontContext>,
+    /// Run page scripts (on by default; `--disable-javascript` turns it off).
+    javascript: bool,
     no_glyphs: NoGlyphs,
     display_list: DisplayList,
     paint_dirty: bool,
@@ -149,6 +153,7 @@ impl Page {
             device_scale: 1.0,
             scroll_y: 0.0,
             fonts: None,
+            javascript: true,
             no_glyphs: NoGlyphs,
             display_list: DisplayList::new(),
             paint_dirty: true,
@@ -342,6 +347,11 @@ impl Page {
             }
             None => Images::new(),
         };
+        let scripts = if self.javascript {
+            scripts::Scripts::collect(&out.document, base_dir)
+        } else {
+            scripts::Scripts::default()
+        };
         self.content = Content::Html(Box::new(HtmlDocument {
             url,
             dom: out.document,
@@ -353,9 +363,147 @@ impl Page {
             external_sheets,
             styles: None,
             layout: None,
+            scripts,
         }));
         self.scroll_y = 0.0;
         self.paint_dirty = true;
+        // External scripts that policy will never fetch count as failed, so
+        // the remaining scripts are not left waiting for them.
+        if let Content::Html(doc) = &mut self.content {
+            let blocked: Vec<NodeId> = doc
+                .scripts
+                .pending()
+                .filter(|&n| {
+                    let src = doc.dom.attribute(n, "src").unwrap_or("");
+                    subresource_url(&doc.url, doc.base_url.as_ref(), src).is_none()
+                })
+                .collect();
+            for n in blocked {
+                doc.scripts.set_source(n, None);
+            }
+        }
+        self.run_scripts_if_ready();
+    }
+
+    /// Enables or disables JavaScript for documents loaded afterwards.
+    pub fn set_javascript_enabled(&mut self, enabled: bool) {
+        self.javascript = enabled;
+    }
+
+    pub fn javascript_enabled(&self) -> bool {
+        self.javascript
+    }
+
+    /// Supplies the source of external script `node` (`None`: it failed),
+    /// then runs the scripts if none are still loading.
+    pub fn set_script_source(&mut self, node: NodeId, source: Option<String>) {
+        if let Content::Html(doc) = &mut self.content {
+            doc.scripts.set_source(node, source);
+        }
+        self.run_scripts_if_ready();
+    }
+
+    /// The document changed under script: rebuild the cascade (scripts may
+    /// add `<style>` or change classes) and lay out again.
+    fn document_mutated(&mut self) {
+        if let Content::Html(doc) = &mut self.content {
+            let sheets = &doc.external_sheets;
+            doc.stylist = rustlite_style::stylist_with_external(&doc.dom, |n| sheets.get(&n));
+            doc.styles = None;
+            doc.layout = None;
+        }
+        self.paint_dirty = true;
+        self.scroll_by(0.0);
+    }
+
+    /// Runs all scripts in document order once every external one has
+    /// arrived, then fires `DOMContentLoaded` and `load`.
+    fn run_scripts_if_ready(&mut self) {
+        let Content::Html(doc) = &mut self.content else {
+            return;
+        };
+        if !doc.scripts.ready() {
+            return;
+        }
+        doc.scripts.ran = true;
+        if doc.scripts.entries.is_empty() {
+            return;
+        }
+        let start = std::time::Instant::now();
+        let host = doc
+            .scripts
+            .host
+            .get_or_insert_with(|| rustlite_script::ScriptHost::new(&doc.url));
+        let mut mutated = false;
+        let mut errors = 0;
+        let mut ran = 0;
+        for entry in &doc.scripts.entries {
+            let scripts::Source::Ready(source) = &entry.source else {
+                continue;
+            };
+            let out = host.run_script(&mut doc.dom, source, &entry.label);
+            mutated |= out.mutated;
+            errors += out.errors.len();
+            ran += 1;
+        }
+        let root = doc.dom.root();
+        for out in [
+            host.dispatch_event(&mut doc.dom, root, "DOMContentLoaded"),
+            host.dispatch_window_event(&mut doc.dom, "load"),
+        ] {
+            mutated |= out.mutated;
+            errors += out.errors.len();
+        }
+        tracing::info!(
+            scripts = ran,
+            errors,
+            mutated,
+            script_ms = start.elapsed().as_secs_f64() * 1000.0,
+            "scripts run"
+        );
+        if mutated {
+            self.document_mutated();
+        }
+    }
+
+    /// Delivers a click at a point of the page viewport (device px) to page
+    /// scripts. Returns true if a listener cancelled it (`preventDefault`),
+    /// in which case the browser must not follow a link there.
+    pub fn dispatch_click(&mut self, x: f32, y: f32) -> bool {
+        let (scale, scroll) = (self.device_scale, self.scroll_y);
+        let Some(target) = self
+            .layout()
+            .and_then(|(_, tree)| rustlite_layout::hit_test(tree, x / scale, y / scale + scroll))
+        else {
+            return false;
+        };
+        let Content::Html(doc) = &mut self.content else {
+            return false;
+        };
+        let Some(host) = doc.scripts.host.as_mut() else {
+            return false;
+        };
+        if !host.has_listeners(&doc.dom, target, "click") {
+            return false;
+        }
+        let out = host.dispatch_event(&mut doc.dom, target, "click");
+        if out.mutated {
+            self.document_mutated();
+        }
+        out.default_prevented
+    }
+
+    /// Console output of the page's scripts (empty without scripts).
+    pub fn console(&mut self) -> Vec<String> {
+        match &mut self.content {
+            Content::Html(doc) => doc
+                .scripts
+                .host
+                .as_mut()
+                .map(|h| h.console().to_vec())
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        }
     }
 
     /// The document's base URL, if it has one.
@@ -379,12 +527,9 @@ impl Page {
         let dom = &doc.dom;
         let mut out: Vec<(Destination, Url, Vec<NodeId>)> = Vec::new();
         let mut add = |dest: Destination, href: &str, node: NodeId| {
-            let Ok(url) = base.join(href.trim()) else {
+            let Some(url) = subresource_url(&doc.url, Some(base), href) else {
                 return;
             };
-            if !matches!(url.scheme(), "http" | "https") {
-                return;
-            }
             match out.iter_mut().find(|(d, u, _)| *d == dest && *u == url) {
                 Some((_, _, nodes)) => nodes.push(node),
                 None => out.push((dest, url, vec![node])),
@@ -394,6 +539,12 @@ impl Page {
             let wanted = if rustlite_style::is_stylesheet_link(dom, n) {
                 (!doc.external_sheets.contains_key(&n))
                     .then(|| dom.attribute(n, "href").map(|h| (Destination::Style, h)))
+                    .flatten()
+            } else if dom.is_element_named(n, "script") {
+                doc.scripts
+                    .pending()
+                    .any(|p| p == n)
+                    .then(|| dom.attribute(n, "src").map(|s| (Destination::Script, s)))
                     .flatten()
             } else if dom.is_element_named(n, "img") {
                 (!doc.images.contains_key(&n))
@@ -611,6 +762,22 @@ impl Page {
     }
 }
 
+/// Resolves a subresource reference and applies the fetch policy: only
+/// `http:`/`https:`, and no `http:` subresources on an `https:` page (mixed
+/// content is blocked outright, stricter than browsers that auto-upgrade
+/// images). `None` means the subresource must not be fetched.
+fn subresource_url(document_url: &str, base: Option<&Url>, href: &str) -> Option<Url> {
+    let url = base?.join(href.trim()).ok()?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    if url.scheme() == "http" && document_url.starts_with("https:") {
+        tracing::warn!(%url, document = document_url, "mixed content blocked");
+        return None;
+    }
+    Some(url)
+}
+
 /// The document's base URL: the first `<base href>` resolved against the
 /// document URL, else the document URL (HTML §2.4.1, simplified).
 fn base_url_for(dom: &Document, document_url: Option<Url>) -> Option<Url> {
@@ -774,6 +941,99 @@ mod tests {
         page.set_viewport(Size::new(200, 250));
         assert_eq!(page.scroll_y(), 50.0);
         assert_eq!(page.layout_count(), 2);
+    }
+
+    #[test]
+    fn scripts_run_after_parsing_and_restyle_the_page() {
+        let mut page = fontless(Size::new(200, 100));
+        page.load_html(
+            "test:doc",
+            "<!DOCTYPE html><title>Before</title>\
+             <script>document.getElementById('box').style; \
+                     document.getElementById('box').setAttribute('style', 'height: 40px');\
+                     document.title = 'After';</script>\
+             <body style='margin:0'><div id=box style='height: 10px'></div>\
+             <script>window.addEventListener('load', () => console.log('loaded'))</script>",
+        );
+        assert_eq!(page.title().as_deref(), Some("After"));
+        let (dom, tree) = page.layout().unwrap();
+        let rects = rustlite_layout::element_rects(tree);
+        let box_node = dom
+            .descendants(dom.root())
+            .find(|&n| dom.attribute(n, "id") == Some("box"))
+            .unwrap();
+        assert_eq!(rects[&box_node].height, 40.0, "mutation was restyled");
+        assert_eq!(page.console(), ["loaded"]);
+    }
+
+    #[test]
+    fn click_listeners_can_cancel_and_change_the_page() {
+        let mut page = fontless(Size::new(200, 100));
+        page.load_html(
+            "test:doc",
+            "<!DOCTYPE html><body style='margin:0'>\
+             <div id=target style='height: 50px'></div>\
+             <script>document.getElementById('target').addEventListener('click', e => {\
+                 e.preventDefault(); document.title = 'clicked';\
+             });</script>",
+        );
+        assert!(page.dispatch_click(10.0, 10.0), "preventDefault reported");
+        assert_eq!(page.title().as_deref(), Some("clicked"));
+        assert!(
+            !page.dispatch_click(10.0, 90.0),
+            "outside the listener's element"
+        );
+    }
+
+    #[test]
+    fn https_pages_do_not_load_http_subresources() {
+        let mut page = fontless(Size::new(200, 100));
+        let html = "<link rel=stylesheet href=http://b.test/a.css><img src=http://b.test/i.png>\
+                    <img src=https://b.test/ok.png><script src=http://b.test/a.js></script>\
+                    <script>console.log('ran')</script>";
+        page.load_html("https://a.test/", html);
+        let urls: Vec<String> = page
+            .subresource_requests()
+            .into_iter()
+            .map(|(_, u, _)| u.to_string())
+            .collect();
+        assert_eq!(urls, ["https://b.test/ok.png"]);
+        assert_eq!(
+            page.console(),
+            ["ran"],
+            "the blocked script does not hold up the others"
+        );
+
+        page.load_html("http://a.test/", html);
+        assert_eq!(
+            page.subresource_requests().len(),
+            4,
+            "http pages may load both"
+        );
+    }
+
+    #[test]
+    fn javascript_can_be_disabled() {
+        let mut page = fontless(Size::new(200, 100));
+        page.set_javascript_enabled(false);
+        page.load_html(
+            "test:doc",
+            "<title>Static</title><script>document.title = 'Scripted'</script>",
+        );
+        assert_eq!(page.title().as_deref(), Some("Static"));
+        assert!(!page.dispatch_click(1.0, 1.0));
+    }
+
+    #[test]
+    fn script_errors_do_not_stop_later_scripts() {
+        let mut page = fontless(Size::new(200, 100));
+        page.load_html(
+            "test:doc",
+            "<script>throw new Error('boom')</script>\
+             <script type=module>document.title = 'module'</script>\
+             <script>console.log('second')</script>",
+        );
+        assert_eq!(page.console(), ["second"], "modules are not run");
     }
 
     #[test]

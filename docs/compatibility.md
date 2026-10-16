@@ -159,5 +159,22 @@ accepted and ignored; system fonts unsupported), `min-width`, `max-width`,
 `min-height`, `max-height` (blocks and replaced elements), `light-dark()`
 (light scheme only).
 
-JavaScript is not implemented yet: pages that build content with scripts
-render only their static HTML.
+### JavaScript (SCRIPT-001)
+
+Engine: Boa 0.22 (ECMAScript, Annex B; no `Intl`, no `Temporal`). Classic
+scripts (inline and `src`) run after parsing in document order, as if
+`defer`; then `DOMContentLoaded` (document) and `load` (window). Not run:
+modules, `document.write`, scripts inserted by `innerHTML`.
+
+| API | Supported |
+|---|---|
+| Globals | `window`, `self`, `globalThis`, `document`, `console.{log,info,warn,error,debug}`, `location.href` (read-only), `addEventListener` on window |
+| `Node` | `nodeType`, `nodeName`, `textContent` (get/set), `parentNode`, `parentElement`, `firstChild`, `lastChild`, `nextSibling`, `previousSibling`, `childNodes` (array snapshot), `isConnected`, `appendChild`, `insertBefore`, `removeChild`, `contains`, `addEventListener`, `removeEventListener` |
+| `Element` | `tagName`, `id`, `className`, `innerHTML` (get/set), `innerText` (= `textContent`), `children`, `firstElementChild`, `classList` (`add`, `remove`, `toggle`, `contains`, `length`), `getAttribute`, `setAttribute`, `removeAttribute`, `hasAttribute`, `remove`, `querySelector`, `querySelectorAll`, `getElementsByTagName`, `matches`, `closest`, `click()`, `onclick` |
+| `Document` | `title` (get/set), `body`, `head`, `documentElement`, `getElementById`, `querySelector(All)`, `getElementsByTagName`, `createElement`, `createTextNode` |
+| Events | `click` from the mouse and `click()`; bubbling to document and window (no capture phase); `preventDefault` (cancels link navigation), `stopPropagation`, `stopImmediatePropagation`, `defaultPrevented`; `on*` attributes and `return false` |
+
+Not yet: timers (`setTimeout`), `fetch`/XHR, `style` objects (use
+`setAttribute('style', …)`), `dataset`, live collections (lists are
+snapshots), keyboard/input events and form controls, `Event` constructors,
+images or stylesheets inserted by scripts (they are not loaded).

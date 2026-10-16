@@ -1,11 +1,33 @@
 # Security
 
-**RustLite now loads untrusted content from the network, but it is a
-single-process prototype without sandboxing. It is not safe for browsing
-untrusted sites with sensitive data on the machine.** It runs no JavaScript,
-which removes most of the attack surface browsers usually have, but parsers,
-decoders and layout still process attacker-controlled input in the main
-process.
+**RustLite loads untrusted content from the network and runs its
+JavaScript, but it is a single-process prototype without sandboxing. It is
+not safe for browsing untrusted sites with sensitive data on the machine.**
+Parsers, decoders, layout and the JavaScript engine (Boa) all process
+attacker-controlled input in the browser process, with the user's
+privileges. `--disable-javascript` turns scripting off. The planned process
+split and OS sandboxes are designed in
+[ADR-0005](../research/decisions/ADR-0005-process-isolation.md).
+
+## JavaScript (SCRIPT-001)
+
+- Engine: Boa 0.22 (Rust), without `Intl`/`Temporal`
+  ([ADR-0004](../research/decisions/ADR-0004-javascript-engine-boa.md)).
+- Scripts see only `window`, `document`, `console`, `location.href` and a DOM
+  subset. No timers, network (`fetch`/XHR), storage, cookies, clipboard,
+  file or browser-UI APIs exist for pages.
+- DOM wrappers cannot be forged: the node behind a wrapper is looked up by
+  object identity in Rust; objects made from our prototypes are rejected.
+- The page's DOM is lent to the engine only during a call; no shared
+  mutable state, no `unsafe` in our bindings.
+- Limits: 10,000,000 iterations per loop and call depth 400; a stopped
+  script reports an error. **Gaps:** no total time limit (many short loops
+  can still run long) and no heap limit; both need process isolation.
+- Scripts inserted through `innerHTML` do not run; modules are not run;
+  `javascript:` URLs stay blocked.
+- External scripts load only over `http(s)` (or from a local document's own
+  directory), are limited to 4 MiB, and are refused when served as an image,
+  audio, video or CSV type.
 
 ## Network
 
@@ -33,6 +55,9 @@ process.
   directory tree (canonicalized; `..`, absolute paths and symlinks pointing
   outside are refused).
 - Network documents load subresources only over `http(s)`.
+- **Mixed content is blocked:** an `https:` document loads no `http:`
+  subresources at all (stylesheets, images, scripts). This is stricter than
+  browsers, which upgrade or allow some passive content.
 
 ## Input hardening
 
@@ -45,13 +70,24 @@ process.
 - Rasterizer tolerates malformed display lists (unbalanced clips are counted).
 - The error page escapes URLs and messages.
 
+## Fuzzing
+
+`crates/browser-core/tests/fuzz.rs` mutates the HTML fixtures (tricky tokens,
+deletions, duplication, splicing, truncation) and checks that parsing yields
+a consistent tree and the whole pipeline (style, layout, paint, find,
+resize) never panics; it also runs random sequences of DOM binding calls.
+CI runs a fixed seed (150 cases per target); 36,000 release-mode cases with
+three other seeds found no failures (2026-10-16). Decoders (PNG/JPEG/GIF)
+and the CSS parser alone are not yet fuzzed separately.
+
 ## Not yet done (required before RustLite is suitable for general browsing)
 
-1. Process isolation: a sandboxed renderer process per site, with the network
-   and UI in a separate privileged process. An ADR is needed before Phase 9
-   (JavaScript).
-2. Same-origin policy for subresources and, later, scripts; CORS; CSP.
-3. Fuzzing of the HTML/CSS parsers and decoders (cargo-fuzz targets).
-4. Download handling and safe file saving (downloads are refused today).
-5. Mixed-content rules (HTTPS pages currently may load HTTP subresources).
+1. Process isolation and OS sandboxes (designed in ADR-0005, not built).
+2. A total script time limit and heap limit (need isolation or an engine
+   interrupt hook).
+3. CORS and CSP. Same-origin rules matter once scripts can fetch or read
+   cross-origin data; today scripts cannot fetch, and cross-origin images,
+   stylesheets and scripts load as they do in browsers.
+4. Coverage-guided fuzzing (cargo-fuzz on nightly) and decoder fuzzing.
+5. Download handling and safe file saving (downloads are refused today).
 6. Dependency auditing in CI (`cargo audit` / `cargo deny`).

@@ -103,6 +103,7 @@ impl ApplicationHandler<AppEvent> for App {
             self.options.exit_after_frames,
             self.loader.clone(),
             initial,
+            self.options.javascript,
         ) {
             Ok(window) => self.window = Some(window),
             Err(e) => self.fail(event_loop, e.into()),
@@ -189,7 +190,8 @@ const HEADLESS_LOAD_TIMEOUT: Duration = Duration::from_secs(20);
 pub fn render_headless(options: &Options, path: &Path) -> Result<HeadlessReport, AppError> {
     let size = options.size;
     let toolbar = ToolbarLayout::new(size.width, 1.0);
-    let page = Page::new(frame::content_size(size, &toolbar));
+    let mut page = Page::new(frame::content_size(size, &toolbar));
+    page.set_javascript_enabled(options.javascript);
     let (tx, rx) = channel();
     let tx = Mutex::new(tx);
     let loader = Loader::new(

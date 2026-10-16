@@ -65,6 +65,20 @@ fn handle(mut stream: TcpStream) {
             "Content-Type: image/png\r\nCache-Control: public, max-age=60\r\n".into(),
             png_4x4(),
         ),
+        "/app" => (
+            "200 OK",
+            "Content-Type: text/html\r\n".into(),
+            b"<title>App</title><script src=/app.js></script>\
+              <script>document.title += ' + inline';</script>\
+              <script src=/missing.js></script><script src=/img.png></script>\
+              <script>console.log('last')</script>"
+                .to_vec(),
+        ),
+        "/app.js" => (
+            "200 OK",
+            "Content-Type: text/javascript\r\n".into(),
+            b"document.title = 'External';".to_vec(),
+        ),
         "/other" => (
             "200 OK",
             "Content-Type: text/html\r\n".into(),
@@ -317,4 +331,22 @@ fn cacheable_subresources_are_reused_until_reload() {
     assert!(t.reload());
     pump(&mut t, &rx, 0);
     assert_eq!(loader.cache_stats().hits, 1, "reload bypasses the cache");
+}
+
+#[test]
+fn external_scripts_run_in_document_order() {
+    let base = server();
+    let (mut t, rx) = tab();
+    t.navigate(&format!("{base}/app")).unwrap();
+    pump(&mut t, &rx, 0);
+    assert_eq!(
+        t.page().title().as_deref(),
+        Some("External + inline"),
+        "the external script ran before the later inline one"
+    );
+    assert_eq!(
+        t.page_mut().console(),
+        ["last"],
+        "a 500 script and an image served as a script are skipped"
+    );
 }

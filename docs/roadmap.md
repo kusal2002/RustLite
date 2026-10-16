@@ -14,7 +14,7 @@ acceptance criteria pass; see [progress.md](progress.md) for live status.
 | 6 | HTTP(S), URL resolution, redirects, errors | Loads local test server + selected pages | **Done** (2026-10-16): local-server tests; example.com; bad certificates refused |
 | 7 | Address bar, navigation, history, loading state, tabs | Navigate and recover from failures | **Done** (2026-10-16): address bar, links, history, loading state, error recovery, tabs, clipboard, find in page |
 | 8 | Benchmarks, memory reporting, bounded caches, incremental invalidation | Measured, regression-tested | **Done** (2026-10-16): harness + baseline, memory report, bounded glyph/shape/HTTP caches, narrower invalidation; dirty-bit incremental restyle/relayout deferred |
-| 9 | JS runtime (Boa evaluation), first DOM APIs | Simple interactive pages | Planned |
+| 9 | JS runtime (Boa evaluation), first DOM APIs | Simple interactive pages | **Done** (2026-10-16): Boa, DOM subset, click events; `tests/pages/interactive.html` works by mouse; mixed content blocked; fuzzing in CI; isolation ADR |
 | 10 | Advanced CSS, Web APIs, isolation, security | Every claim tested + documented | Planned |
 
 ## Next milestones
@@ -26,8 +26,11 @@ and copy in page content, tab drag-reordering, session restore.
 repaint, HTTP revalidation (`ETag`/`Last-Modified`), faster HTML parsing
 (~23 µs per element on the large benchmark).
 
-**Before Phase 9 (JavaScript):** a process-isolation ADR (sandboxed renderer
-per site), same-origin policy for subresources, parser fuzzing in CI.
+**Phase 9 follow-ups:** timers and an event loop (`setTimeout`,
+`requestAnimationFrame`), keyboard and form events, `element.style`,
+loading resources inserted by scripts, a total script time limit.
+
+**Before broad use:** the process split and sandboxes of ADR-0005.
 
 Still open from earlier phases: inline backgrounds/borders, `inline-block`,
 floats/positioning, 3D border shading, broken-image rendering, GPU backend.

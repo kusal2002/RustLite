@@ -36,6 +36,7 @@ is still to be built (see [roadmap](roadmap.md)).
 | `crates/browser-core` | `rustlite-browser-core` | Page/document lifecycle, viewport, cached display list with invalidation | Implemented (about:blank + parsed, styled HTML; no rendering of content) |
 | `crates/paint` | `rustlite-paint` | Geometry (`Rect`, `Size`, `Point`), `Color`, `DisplayList` | Implemented |
 | `crates/renderer` | `rustlite-renderer` | CPU rasterizer (fills, borders, clips, alpha), PNG encoder | Implemented |
+| `crates/script` | `rustlite-script` | Boa realm per scripted document, DOM bindings, events | Implemented ([ADR-0004](../research/decisions/ADR-0004-javascript-engine-boa.md)) |
 | `crates/diagnostics` | `rustlite-diagnostics` | `tracing` setup, frame-time statistics | Implemented |
 | `crates/dom` | `rustlite-dom` | Arena DOM, traversal, mutation, html5lib tree dump | Implemented |
 | `crates/html` | `rustlite-html` | WHATWG tokenizer + tree builder | Implemented (see compatibility.md) |
@@ -95,6 +96,7 @@ windows.
 | `ureq 3.4` (rustls, platform-verifier, gzip) | HTTP/1.1 client | All (ring needs a C compiler) | MIT/Apache-2.0 | Synchronous; run on loader threads. Brings rustls + ring + rustls-platform-verifier |
 | `arboard 3.7` (no default features) | System clipboard text | All (X11 on Linux; no Wayland data-control without the feature) | MIT/Apache-2.0 | Desktop app only; opened lazily on first copy/paste |
 | `self_cell 1.2` | Safe self-referential struct (font bytes + parsed rustybuzz face) | All | Apache-2.0/GPL-2.0 | No dependencies; keeps `unsafe` out of our crates. Same use as cosmic-text |
+| `boa_engine 0.22` (`annex-b` only) | JavaScript engine | All | MIT/Unlicense | +6.1 MiB binary; ~0.29 MB and ~0.8 ms per realm. ADR-0004 |
 | `url 2.5` | WHATWG URL parsing and resolution | All | MIT/Apache-2.0 | |
 | `encoding_rs 0.8` | WHATWG Encoding Standard decoders | All | MIT/Apache-2.0 + WHATWG BSD-3 data | Encoding tables add ~1 MiB of binary |
 
