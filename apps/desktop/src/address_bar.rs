@@ -272,10 +272,13 @@ mod tests {
         let mut bar = AddressBar::default();
         bar.focus();
         let q = Key::Character("q".into());
+        // Both Ctrl and Cmd combinations are shortcuts on every platform.
         assert_eq!(
             bar.key(&q, Some("q"), ModifiersState::CONTROL),
             Edit::Ignored
         );
+        assert_eq!(bar.key(&q, Some("q"), ModifiersState::SUPER), Edit::Ignored);
+        assert_eq!(bar.text(), "", "shortcut keys must not type text");
         bar.insert("a\nb\tc");
         assert_eq!(bar.text(), "abc");
         assert_eq!(
