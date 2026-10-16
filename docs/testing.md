@@ -49,7 +49,7 @@ CI runs the harness only as a smoke test. See
 ## Windowed smoke test
 
 ```bash
-RUST_LOG=info cargo run --release -- --exit-after-frames 120
+RUST_LOG=info cargo run --release -p rustlite-desktop -- --exit-after-frames 120
 ```
 
 Expected: `window created` and `frame times (last 120 frames)` log lines, exit 0.

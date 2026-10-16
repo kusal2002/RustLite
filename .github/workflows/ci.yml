@@ -27,7 +27,7 @@ jobs:
       - run: cargo test --workspace
       - run: cargo build --release --workspace
       - name: Headless render
-        run: cargo run --release -- --size 800x600 --headless frame.png tests/pages/sample.html
+        run: cargo run --release -p rustlite-desktop -- --size 800x600 --headless frame.png tests/pages/sample.html
       # Smoke-runs the benchmark harness. Timings on shared runners are too
       # noisy to gate on; compare locally with --compare (docs/performance.md).
       - name: Benchmarks (smoke)

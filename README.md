@@ -17,7 +17,7 @@ floats, flex/grid or JavaScript yet, and no sandbox: see
 Requires Rust 1.95 (pinned in `rust-toolchain.toml`).
 
 ```bash
-cargo run --release
+cargo run --release -p rustlite-desktop
 ```
 
 Options:
@@ -32,8 +32,8 @@ Options:
 --dump-layout <HTML_FILE> Print element boxes after layout (viewport = --size)
 ```
 
-Open a page: `cargo run --release -- https://example.com/` or a local file:
-`cargo run --release -- tests/pages/sample.html`. Without an argument the
+Open a page: `cargo run --release -p rustlite-desktop -- https://example.com/` or a local file:
+`cargo run --release -p rustlite-desktop -- tests/pages/sample.html`. Without an argument the
 address bar is focused; type a URL or path and press Enter.
 
 Shortcuts (Cmd instead of Ctrl on macOS): Ctrl+L / Alt+D / F6 address bar ·
@@ -43,7 +43,7 @@ Ctrl+F find (Enter / Shift+Enter, F3 next/previous) · Ctrl+C/X/V in text
 fields · Ctrl+Q quit · F12 debug overlay · wheel, ↑/↓, Page Up/Down,
 Space/Shift+Space, Home/End scroll. Click links to follow them;
 Ctrl+click or middle-click opens them in a background tab.
-Logging: `RUST_LOG=debug cargo run`.
+Logging: `RUST_LOG=debug cargo run -p rustlite-desktop`.
 
 ## Checks
 
