@@ -175,8 +175,15 @@ impl AddressBar {
                 self.cursor = self.text.len();
                 Edit::Changed
             }
-            // Other shortcuts (Ctrl+Q, Ctrl+L, ...) pass through.
-            _ if primary || mods.alt_key() => Edit::Ignored,
+            // Other shortcuts (Ctrl+Q, Cmd+L, Alt+Left, ...) pass through and
+            // never type text. On macOS, Option+key types characters (e.g. "ø"),
+            // so Alt alone is text input there.
+            _ if mods.control_key()
+                || mods.super_key()
+                || (mods.alt_key() && !cfg!(target_os = "macos")) =>
+            {
+                Edit::Ignored
+            }
             _ => match text {
                 Some(t) if !t.is_empty() => {
                     self.insert(t);
