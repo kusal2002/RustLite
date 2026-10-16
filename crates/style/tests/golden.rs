@@ -34,6 +34,30 @@ fn compared_properties(source: &str) -> Vec<String> {
     }
 }
 
+/// The oracle ran on Windows, where the UA-defined initial `font-family` is
+/// "Times New Roman". On other platforms RustLite's initial family differs
+/// (as Chromium's does), so expected lines carrying the Windows default are
+/// rewritten to this platform's default. Every other value must match exactly.
+fn adapt_platform_defaults(expected: &str) -> String {
+    const WINDOWS_DEFAULT: &str = "  font-family: \"Times New Roman\"";
+    let platform = rustlite_style::computed::INITIAL_FONT_FAMILY;
+    if platform == "Times New Roman" {
+        return expected.to_owned();
+    }
+    let replacement = format!("  font-family: {platform}");
+    expected
+        .lines()
+        .map(|l| {
+            if l == WINDOWS_DEFAULT {
+                replacement.as_str()
+            } else {
+                l
+            }
+        })
+        .map(|l| format!("{l}\n"))
+        .collect()
+}
+
 /// Line-level diff: only the differing lines, with the element they belong to.
 fn diff(expected: &str, actual: &str) -> String {
     let mut out = String::new();
@@ -73,6 +97,7 @@ fn style_golden_fixtures_match_reference_browser() {
         let source = fs::read_to_string(path).unwrap();
         let expected = fs::read_to_string(path.with_extension("styles"))
             .unwrap_or_else(|_| panic!("{name}: missing .styles (run the oracle)"));
+        let expected = adapt_platform_defaults(&expected);
 
         let parsed = rustlite_html::parse_document(&source);
         let doc = &parsed.document;
