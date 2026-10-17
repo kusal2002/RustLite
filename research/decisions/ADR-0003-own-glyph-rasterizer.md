@@ -1,6 +1,7 @@
 # ADR-0003: Replace fontdue with an on-demand glyph rasterizer
 
-- Status: Accepted (supersedes the rasterization part of ADR-0002)
+- Status: Accepted (supersedes the rasterization part of ADR-0002); outlines now come from `skrifa`
+  instead of `ttf-parser` ([ADR-0007](ADR-0007-font-stack-harfrust-skrifa.md))
 - Date: 2026-10-16
 
 ## Context

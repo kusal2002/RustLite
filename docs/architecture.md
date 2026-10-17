@@ -99,17 +99,16 @@ windows.
 
 | Crate | Why | Platforms | License | Cost notes |
 |---|---|---|---|---|
-| `winit 0.30` | Window + input events | Win/macOS/Linux (X11+Wayland) | Apache-2.0 | Moderate; standard choice. 0.31 is still beta. |
+| `winit 0.30` (no default features: `rwh_06`, `x11`, `wayland`, `wayland-dlopen`, `wayland-csd-adwaita-notitle`) | Window + input events | Win/macOS/Linux (X11+Wayland) | Apache-2.0 | Moderate; standard choice. 0.31 is still beta. Wayland client-side title bars have no title text, which keeps `ab_glyph`/`ttf-parser` out of the tree (ADR-0007) |
 | `softbuffer 0.4` | Present a CPU pixel buffer to a window | Win/macOS/Linux (X11+Wayland, dlopen) | MIT/Apache-2.0 | Small; no GPU stack. |
 | `tracing 0.1`, `tracing-subscriber 0.3` | Structured logging | All | MIT | Small. `env-filter` + `fmt` only. |
 | `thiserror 2` | Typed errors | All | MIT/Apache-2.0 | Proc-macro, compile-time only. |
 | `fontdb 0.24` | System font discovery and CSS-style matching | All (pure Rust; reads fontconfig files on Linux) | MIT | Indexes ~365 faces in ~35 ms. |
-| `rustybuzz 0.20` | Shaping (HarfBuzz port) | All | MIT | Pure Rust. |
-| `ttf-parser 0.25` | Font tables, metrics, cmap | All | MIT/Apache-2.0 | Shared by fontdb and rustybuzz. |
+| `harfrust 0.14` | Shaping (HarfBuzz port, rustybuzz's successor); font metrics and cmap through its `read-fonts` font model | All | MIT | Pure Rust, no `unsafe`. ~15 KB heap per loaded face (rustybuzz held ~200–270 KB). ADR-0007 |
+| `skrifa 0.48` (no default features + `std`) | Glyph outlines (TrueType, CFF, CFF2) for our rasterizer; fallback cmap checks | All | MIT/Apache-2.0 | fontations, shares `read-fonts` with harfrust. `rustlite.exe` grew 0.43 MiB (11.25 → 11.67 MiB) over rustybuzz/ttf-parser, mostly skrifa's hinting interpreters. ADR-0007 |
 | `image 0.25` (png, jpeg, gif only) | Image decoding | All | MIT/Apache-2.0 | ~0.45 MiB of binary; limits on dimensions and allocation. |
 | `ureq 3.4` (rustls, platform-verifier, gzip) | HTTP/1.1 client | All (ring needs a C compiler) | MIT/Apache-2.0 | Synchronous; run on loader threads. Brings rustls + ring + rustls-platform-verifier |
 | `arboard 3.7` (no default features) | System clipboard text | All (X11 on Linux; no Wayland data-control without the feature) | MIT/Apache-2.0 | Desktop app only; opened lazily on first copy/paste |
-| `self_cell 1.2` | Safe self-referential struct (font bytes + parsed rustybuzz face) | All | Apache-2.0/GPL-2.0 | No dependencies; keeps `unsafe` out of our crates. Same use as cosmic-text |
 | `boa_engine 0.22` (`annex-b` only) | JavaScript engine | All | MIT/Unlicense | +6.1 MiB binary; ~0.29 MB and ~0.8 ms per realm. ADR-0004 |
 | `url 2.5` | WHATWG URL parsing and resolution | All | MIT/Apache-2.0 | |
 | `windows-sys 0.61` (Foundation, Security, Console, JobObjects, Pipes, Threading) | Restricted-token process creation, job objects, mitigations for the sandbox | Windows only | MIT/Apache-2.0 | Raw bindings, no runtime; used only by `rustlite-sandbox`. ADR-0006 |

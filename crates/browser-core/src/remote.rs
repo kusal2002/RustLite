@@ -26,6 +26,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
@@ -795,12 +796,12 @@ fn decode_opt_bytes(answer: &[u8]) -> Option<Option<&[u8]>> {
 struct BrokeredFonts(SharedChannel);
 
 impl FontBroker for BrokeredFonts {
-    fn face_data(&mut self, face: u32) -> Option<Rc<[u8]>> {
+    fn face_data(&mut self, face: u32) -> Option<Arc<[u8]>> {
         let mut w = Writer::default();
         w.u8(UPCALL_FONT_DATA);
         w.u32(face);
         let answer = self.0.borrow_mut().upcall(&w.buf)?;
-        decode_opt_bytes(&answer)?.map(Rc::from)
+        decode_opt_bytes(&answer)?.map(Arc::from)
     }
 
     fn fallback(&mut self, c: char, weight: u16, italic: bool) -> Option<u32> {

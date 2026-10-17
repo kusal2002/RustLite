@@ -6,7 +6,7 @@
 |---|---|---|---|
 | Rust target | `x86_64-pc-windows-msvc` (verified) | `x86_64-unknown-linux-gnu` | `aarch64-apple-darwin`, `x86_64-apple-darwin` |
 | Build prerequisites | MSVC Build Tools + Windows SDK | gcc/clang; X11 and/or Wayland libs at **runtime** (loaded via dlopen) | Xcode command-line tools |
-| Windowing | winit (Win32) | winit (X11, Wayland) | winit (AppKit) |
+| Windowing | winit (Win32) | winit (X11, Wayland; client-side Wayland title bars have no title text) | winit (AppKit) |
 | Presentation | softbuffer (GDI) | softbuffer (X11 SHM / Wayland SHM) | softbuffer (CoreGraphics) |
 | GPU backend | Not used yet (planned wgpu: DX12/Vulkan) | Planned wgpu: Vulkan/GL | Planned wgpu: Metal |
 | Font discovery | Not implemented | Not implemented | Not implemented |
@@ -176,7 +176,7 @@ Known differences:
 System fonts via fontdb on all platforms; generic families map to the first
 installed of a per-platform list (e.g. serif → Times New Roman / Times /
 Liberation Serif / DejaVu Serif); per-character fallback keeps combining marks
-and Sinhala signs with their base; shaping with rustybuzz (kerning, ligatures);
+and Sinhala signs with their base; shaping with harfrust (kerning, ligatures);
 grayscale glyph rasterization without hinting by RustLite's own on-demand
 rasterizer ([ADR-0003](../research/decisions/ADR-0003-own-glyph-rasterizer.md);
 text looks softer than Chromium's). No `@font-face`, no color emoji tables.

@@ -10,12 +10,9 @@ version = 2
 # direct and indirect dependencies alike.
 unmaintained = "all"
 yanked = "deny"
-# Acknowledged, with a reason. Unmaintained is not vulnerable: these are
-# reviewed again when the font stack moves (harfrust / skrifa).
-ignore = [
-    { id = "RUSTSEC-2026-0206", reason = "rustybuzz unmaintained; shaping engine, migration to harfrust planned" },
-    { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained; used by rustybuzz and fontdb, migration to skrifa planned" },
-]
+# No acknowledged advisories. (rustybuzz and ttf-parser, flagged
+# unmaintained, were replaced by harfrust and skrifa; ADR-0007.)
+ignore = []
 
 [licenses]
 version = 2
