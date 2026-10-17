@@ -48,7 +48,7 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | LAYOUT-002 | Positioning (relative/absolute/fixed, z-index), floats and clearance, inline-block/inline-flex, flexbox, `box-sizing`, hyphen break opportunities; style properties for all of them | Verified on reference browser (fixture set) | `positioning`, `floats`, `inline-block`, `flexbox`, `box-sizing`, `hyphen-breaks` layout fixtures and `layout-properties` style fixture match Chromium 152 (≤0.02 px); 36,000 extra release fuzz cases |
 | PROC-001 | Renderer process per tab per site, framed IPC, watchdog and crash fallback, `--single-process` | Tested | `apps/desktop/tests/renderer.rs` (end-to-end page, hung renderer, garbage renderer); IPC/message decode unit tests; scripted window runs with 3 tabs |
 | SANDBOX-001 | Windows sandbox: renderer created suspended with a restricted lockdown token (deny-only groups, NULL restricting SID, no privileges, low integrity) and a warm-up token it drops; job object per renderer (memory cap, no child processes, UI limits, kill on close); mitigations | Tested (Windows) | `sandboxed_renderer_cannot_touch_files_network_or_processes` (write, read, process start and TCP connect denied); window runs: every renderer logged a complete lockdown at integrity 0x1000; ADR-0006 |
-| SANDBOX-002 | Linux (no_new_privs, Landlock, seccomp-bpf) and macOS (`sandbox_init`) renderer sandboxes | Tested (CI) | CI run 38986502575: the self-test (write, read, process start, TCP connect denied) and brokered-page tests pass on ubuntu-latest and macos-latest; every renderer logged a complete lockdown |
+| SANDBOX-002 | Linux (no_new_privs, Landlock, default-deny seccomp-bpf allowlist) and macOS (`sandbox_init`) renderer sandboxes | Tested (CI) | CI run 39049665123: the self-test (write, read, process start, TCP connect and an unlisted system call denied, the last with `EPERM`) and brokered-page tests pass on ubuntu-latest and macos-latest; every renderer logged a complete lockdown; strace shows no needed call refused; `linux::tests` check the filter program |
 | BROKER-001 | Renderers open no files: font face list, font data, fallback faces and local subresources come from the browser by upcall | Tested | `local_subresources_and_fonts_come_from_the_browser` (stylesheet, script, image, Sinhala fallback; a stylesheet outside the directory is refused; same image placement as a local page); `upcalls_are_answered_only_within_policy` |
 | SEC-003 | Dependency auditing (`cargo deny`: advisories, licenses, bans, sources) | Tested (CI) | `deny.toml`; `audit` CI job; first run found `rustybuzz`/`ttf-parser` unmaintained, since replaced (FONT-003); no acknowledged advisories |
 | FONT-003 | Font stack on maintained crates: `harfrust` shaping, `skrifa` outlines, `read-fonts` metrics/cmap (rustybuzz, ttf-parser, self_cell removed) | Verified on reference browser (layout fixtures) / Tested | 19/19 layout fixtures still match Chromium 152; 302 workspace tests; raster parity vs the old path on 7 Windows fonts ([ADR-0007](../research/decisions/ADR-0007-font-stack-harfrust-skrifa.md)) |
@@ -407,3 +407,37 @@ Tested · Verified on reference browser · Blocked · Deferred.
   without server-side decorations (GNOME) draw the title bar without its
   text. `ttf-parser`, `owned_ttf_parser`, `ab_glyph`, `rustybuzz` and
   `self_cell` are no longer in `Cargo.lock`.
+
+### 2026-10-17 — Linux renderer seccomp filter: denylist → allowlist
+
+- **What:** the seccomp-bpf filter in `crates/sandbox/src/linux.rs` is now
+  default-deny. Only the calls a locked-down renderer makes are allowed
+  (stdio pipe I/O, memory, threads, futexes, signals to itself, clocks,
+  sleep, `getrandom`); the rest return `EPERM`. Arguments are checked
+  where it is cheap: `mmap`/`mprotect` without `PROT_EXEC`, `clone` only
+  with glibc's thread flags (`clone3` → `ENOSYS` so glibc falls back),
+  `tgkill` only to the renderer's own pid, `ioctl` only `TCGETS`, `fcntl`
+  and `prctl` limited to a few commands. Each rule's BPF body ends in a
+  return, so jumps stay local and the list can grow without overflowing
+  the 8-bit jump offsets. The self-test gained `unlisted_syscall`
+  (`getppid` must fail with `EPERM`).
+- **How the list was derived:** from the renderer's code path (single
+  thread after lockdown; stdio IPC; logging to stderr; fonts and files by
+  upcall), then confirmed in CI with a new non-gating step,
+  `scripts/renderer-syscalls.sh`, which runs the renderer tests under
+  `strace -ff` and lists each renderer's calls after the filter went in.
+  Run 39049665123: 6 renderers traced; after lockdown they made `read` (76),
+  `write` (69), `brk` (20), `mmap` (8), `munmap` (5), `sigaltstack`,
+  `exit_group`, plus the self-test's probes; the only refusals were the
+  probes (`openat` ×3, `getcwd` ×2, `unlink`, `socket`, `getppid`).
+- **Tests:** Windows: fmt ✅ · clippy `-D warnings` ✅ · `cargo test
+  --workspace` ✅ 302 passed. `rustlite-sandbox` passes clippy `-D
+  warnings` for x86_64 and aarch64 Linux locally. CI run 39049665123: all four
+  jobs green (ubuntu, macos, windows, cargo deny); ubuntu ran 304 tests,
+  including four `linux::tests` that run the filter through a small BPF
+  interpreter (allowed, refused and argument-checked calls, foreign
+  architecture, x32); all 3 `--renderer` processes logged a complete
+  lockdown, none an incomplete one.
+- **Not covered:** aarch64 Linux is compiled and clippy-checked but not
+  run; the windowed browser on Linux has not been run under the
+  allowlist (no display in CI).

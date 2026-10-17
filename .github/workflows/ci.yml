@@ -25,6 +25,12 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # The system calls renderers make under the seccomp allowlist, and
+      # the ones it refuses (strace changes timing, so it does not gate).
+      - name: Renderer system calls (strace)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: bash scripts/renderer-syscalls.sh
       - run: cargo build --release --workspace
       - name: Headless render
         run: cargo run --release -p rustlite-desktop -- --size 800x600 --headless frame.png tests/pages/sample.html

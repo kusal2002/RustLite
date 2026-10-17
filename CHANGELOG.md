@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed — 2026-10-17 (Linux renderer sandbox)
+- The Linux renderer's seccomp-bpf filter is a default-deny allowlist
+  instead of a denylist: only stdio I/O, memory (never executable),
+  thread-only `clone`, futexes, signals to itself, clocks, sleep and
+  `getrandom` are allowed; every other call fails with `EPERM`
+  (`clone3` with `ENOSYS`). Opening, stat-ing or deleting paths is now
+  refused by the filter as well as by Landlock.
+- The renderer self-test reports `unlisted_syscall` (Linux), and CI lists
+  the system calls renderers make under strace
+  (`scripts/renderer-syscalls.sh`).
+
 ### Changed — 2026-10-17 (font stack, ADR-0007)
 - Shaping moved from `rustybuzz` to `harfrust` 0.14; font metrics and cmap
   come from its `read-fonts` model, and glyph outlines for the rasterizer

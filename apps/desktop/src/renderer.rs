@@ -96,8 +96,9 @@ fn verdict(allowed: bool) -> &'static str {
 
 /// `--renderer-selftest <dir> [port]`: waits for a line on stdin, locks
 /// down, then tries what a compromised renderer might — write and read
-/// files in `dir`, start a process, connect to `127.0.0.1:port` — and
-/// prints one `key=value` line per check.
+/// files in `dir`, start a process, connect to `127.0.0.1:port`, and (on
+/// Linux) make a system call outside the seccomp allowlist — and prints
+/// one `key=value` line per check.
 pub fn selftest(dir: &Path, port: Option<u16>) {
     let exe = std::env::current_exe().unwrap_or_default();
     let mut line = String::new();
@@ -130,5 +131,8 @@ pub fn selftest(dir: &Path, port: Option<u16>) {
                 .unwrap_or(false);
         std::panic::set_hook(quiet);
         say(format_args!("network_connect={}", verdict(net)));
+    }
+    if let Some(denied) = rustlite_sandbox::unlisted_syscall_denied() {
+        say(format_args!("unlisted_syscall={}", verdict(!denied)));
     }
 }
