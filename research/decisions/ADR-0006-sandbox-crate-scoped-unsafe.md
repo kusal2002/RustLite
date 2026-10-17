@@ -1,8 +1,8 @@
 # ADR-0006: A sandbox crate with scoped `unsafe` (windows-sys)
 
-- Status: Accepted. Windows: restricted token + job, verified. Linux
-  (Landlock + seccomp) and macOS (`sandbox_init`): implemented, awaiting
-  their first CI run.
+- Status: Accepted and implemented. Windows: restricted token + job,
+  verified locally. Linux (Landlock + seccomp) and macOS (`sandbox_init`):
+  verified in CI (run 38986502575).
 - Date: 2026-10-17 (revised the same day: restricted token, Unix sandboxes)
 
 ## Context
@@ -83,8 +83,9 @@ on later.
   directory, starting a process and connecting to a local TCP port all
   denied; real pages (fonts, scripts, local subresources) render through
   the broker of ADR-0005.
-- Linux and macOS code is type-checked and linted for those targets on the
-  development machine; it runs for the first time in CI.
+- Linux and macOS: the same self-test passes in CI on ubuntu-latest and
+  macos-latest (run 38986502575), and pages render there through the
+  broker with the sandbox on.
 - **Remaining gaps** (also in `docs/security.md`): the Linux filter is a
   denylist; the macOS profile allows by default and denies specific
   operations; no memory limits outside Windows.

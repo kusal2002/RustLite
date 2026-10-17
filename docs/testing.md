@@ -67,7 +67,8 @@ the seccomp program (Linux).
 `cargo deny check` (CI job `audit`, configuration in `deny.toml`):
 RustSec advisories (vulnerable, unmaintained, yanked), a permissive
 license allowlist, wildcard dependencies, and crates.io as the only
-source.
+source. Acknowledged advisories are listed in `deny.toml` with a reason;
+RustLite's own unpublished crates are excluded from the license check.
 
 ## Fuzzing
 

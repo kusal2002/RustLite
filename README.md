@@ -11,8 +11,8 @@ renders with its own HTML parser, CSS engine, layout (normal flow, floats,
 positioning, inline-block, flexbox), glyph rasterizer and CPU renderer
 (each verified against Chromium on golden fixtures). Each tab's page runs in
 a separate renderer process that can open no files, make no network
-connections and start no processes (verified on Windows; the Linux and
-macOS sandboxes are new and not yet verified). No grid or tables. See
+connections and start no processes (verified on Windows, Linux and
+macOS). No grid or tables. See
 [docs/security.md](docs/security.md) before browsing untrusted sites. See [docs/roadmap.md](docs/roadmap.md) and
 [docs/progress.md](docs/progress.md).
 

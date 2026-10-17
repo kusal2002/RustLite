@@ -29,9 +29,10 @@ repaint, HTTP revalidation (`ETag`/`Last-Modified`), faster HTML parsing
 **Phase 10 follow-ups:**
 - ~~Brokered fonts and local files; restricted-token renderers on Windows;
   Linux (Landlock + seccomp) and macOS (`sandbox_init`) sandboxes;
-  `cargo deny` in CI~~ — done 2026-10-17 (Unix sandboxes and the audit job
-  await their first CI run). Next: seccomp allowlist, deny-default macOS
-  profile, memory limits outside Windows.
+  `cargo deny` in CI~~ — done 2026-10-17, verified on all three platforms.
+  Next: seccomp allowlist, deny-default macOS profile, memory limits
+  outside Windows; move fonts from the unmaintained `rustybuzz`/`ttf-parser`
+  to `harfrust`/`skrifa`.
 - Layout: grid, tables, `position: sticky`, `auto` margins on absolutely
   positioned boxes, floats placed mid-line.
 - POST forms, `<textarea>`, `<select>`, `fetch`; a graceful script timeout

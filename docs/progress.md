@@ -48,9 +48,9 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | LAYOUT-002 | Positioning (relative/absolute/fixed, z-index), floats and clearance, inline-block/inline-flex, flexbox, `box-sizing`, hyphen break opportunities; style properties for all of them | Verified on reference browser (fixture set) | `positioning`, `floats`, `inline-block`, `flexbox`, `box-sizing`, `hyphen-breaks` layout fixtures and `layout-properties` style fixture match Chromium 152 (≤0.02 px); 36,000 extra release fuzz cases |
 | PROC-001 | Renderer process per tab per site, framed IPC, watchdog and crash fallback, `--single-process` | Tested | `apps/desktop/tests/renderer.rs` (end-to-end page, hung renderer, garbage renderer); IPC/message decode unit tests; scripted window runs with 3 tabs |
 | SANDBOX-001 | Windows sandbox: renderer created suspended with a restricted lockdown token (deny-only groups, NULL restricting SID, no privileges, low integrity) and a warm-up token it drops; job object per renderer (memory cap, no child processes, UI limits, kill on close); mitigations | Tested (Windows) | `sandboxed_renderer_cannot_touch_files_network_or_processes` (write, read, process start and TCP connect denied); window runs: every renderer logged a complete lockdown at integrity 0x1000; ADR-0006 |
-| SANDBOX-002 | Linux (no_new_privs, Landlock, seccomp-bpf) and macOS (`sandbox_init`) renderer sandboxes | Implemented (not yet run) | Type-checked and clippy-clean for `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`; the same self-test runs in CI on the next push |
+| SANDBOX-002 | Linux (no_new_privs, Landlock, seccomp-bpf) and macOS (`sandbox_init`) renderer sandboxes | Tested (CI) | CI run 38986502575: the self-test (write, read, process start, TCP connect denied) and brokered-page tests pass on ubuntu-latest and macos-latest; every renderer logged a complete lockdown |
 | BROKER-001 | Renderers open no files: font face list, font data, fallback faces and local subresources come from the browser by upcall | Tested | `local_subresources_and_fonts_come_from_the_browser` (stylesheet, script, image, Sinhala fallback; a stylesheet outside the directory is refused; same image placement as a local page); `upcalls_are_answered_only_within_policy` |
-| SEC-003 | Dependency auditing (`cargo deny`: advisories, licenses, bans, sources) | Implemented (first CI run pending) | `deny.toml`; `audit` CI job |
+| SEC-003 | Dependency auditing (`cargo deny`: advisories, licenses, bans, sources) | Tested (CI) | `deny.toml`; `audit` CI job; first run found `rustybuzz`/`ttf-parser` unmaintained (acknowledged, migration planned) |
 | CSS-002 | `font` shorthand, `min-/max-width/height`, `light-dark()` | Verified on reference browser (fixture set) | `font-shorthand` style and `min-max-sizes` layout fixtures match Chromium 152 |
 | JS-001 | JS runtime | Deferred (Phase 9) | — |
 
@@ -66,8 +66,10 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 - Local documents load images/stylesheets only from their own directory; network
   documents only over http(s). No `data:` URLs, cookies, cache or JavaScript.
-- Renderer sandboxes are verified on Windows; the Linux and macOS ones
-  have not run yet (see [security.md](security.md)).
+- Renderer sandboxes are verified on Windows (locally) and on Linux and
+  macOS (CI); see [security.md](security.md) for their gaps.
+- `rustybuzz` and `ttf-parser` are unmaintained (RustSec); migration to
+  `harfrust`/`skrifa` is planned.
 - No grid, tables or `position: sticky` (see compatibility.md).
 - CSS gaps (at-rules, `:not()`, `var()`, `calc()`, external sheets) are listed in
   [compatibility.md](compatibility.md#css-css-001--tested-verified-on-reference-browser).
@@ -354,11 +356,15 @@ Tested · Verified on reference browser · Blocked · Deferred.
   broker, a `../` stylesheet is refused, and a Sinhala fallback face is
   chosen by the browser. Window run: three tabs, every renderer locked
   down, all exited with the browser. Linux/macOS code compiles and passes
-  clippy for those targets; **not run yet** (needs a push).
+  clippy for those targets; CI run 38986502575 then ran the full self-test
+  and broker tests on ubuntu-latest and macos-latest: all passed, every
+  renderer fully locked down. The first audit run flagged `rustybuzz` and
+  `ttf-parser` as unmaintained and our own crates as unlicensed; the
+  former are acknowledged in `deny.toml`, the latter excluded as private.
 - **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 302 passed.
 - **Measurements:** binary 11.25 MiB; three tabs 70.8 MB working set
   (browser 28.7 MB, renderers 10.4/15.1/16.5 MB). A first run showed
   96.4 MB because each font crossing the pipe was copied three times in
   the renderer; fixed before this measurement.
-- **Not done:** CI runs of the Unix sandboxes and the audit job; seccomp
-  allowlist; deny-default macOS profile; memory limits outside Windows.
+- **Not done:** seccomp allowlist; deny-default macOS profile; memory
+  limits outside Windows; replacing `rustybuzz`/`ttf-parser`.

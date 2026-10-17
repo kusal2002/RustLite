@@ -10,7 +10,12 @@ version = 2
 # direct and indirect dependencies alike.
 unmaintained = "all"
 yanked = "deny"
-ignore = []
+# Acknowledged, with a reason. Unmaintained is not vulnerable: these are
+# reviewed again when the font stack moves (harfrust / skrifa).
+ignore = [
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz unmaintained; shaping engine, migration to harfrust planned" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained; used by rustybuzz and fontdb, migration to skrifa planned" },
+]
 
 [licenses]
 version = 2
@@ -30,6 +35,11 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.9
+
+# RustLite's own crates are unpublished (`publish = false`) and carry no
+# license field yet; the license check covers third-party code.
+[licenses.private]
+ignore = true
 
 [bans]
 multiple-versions = "allow"

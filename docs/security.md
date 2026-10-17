@@ -2,9 +2,8 @@
 
 **RustLite loads untrusted content from the network and runs its
 JavaScript. Pages run in separate, sandboxed renderer processes that can
-open no files, make no network connections and start no processes (verified
-on Windows; the Linux and macOS sandboxes are implemented but have not yet
-run in CI). It is a prototype: do not rely on it for browsing untrusted
+open no files, make no network connections and start no processes
+(verified on Windows 11 and in CI on Ubuntu and macOS). It is a prototype: do not rely on it for browsing untrusted
 sites with sensitive data on the machine.** `--disable-javascript` turns scripting off. Design:
 [ADR-0005](../research/decisions/ADR-0005-process-isolation.md) (process
 split) and [ADR-0006](../research/decisions/ADR-0006-sandbox-crate-scoped-unsafe.md)
@@ -61,8 +60,7 @@ a process and connecting to a local TCP listener all fail.
 - **Mitigations:** no dynamic code; no DLLs from remote or low-integrity
   locations.
 
-**Linux** (implemented; type-checked and linted for the target, not yet run
-in CI): `no_new_privs`; a Landlock ruleset that handles every filesystem
+**Linux** (verified in CI, ubuntu-latest, CI run 38986502575): `no_new_privs`; a Landlock ruleset that handles every filesystem
 right (and TCP bind/connect on ABI 4+) and grants none; a seccomp-bpf filter
 (all threads) that kills the process for a foreign architecture and returns
 `EPERM` for `socket`, `execve`/`execveat`, `ptrace`,
@@ -71,7 +69,7 @@ right (and TCP bind/connect on ABI 4+) and grants none; a seccomp-bpf filter
 `io_uring`, handle-based opens, reboot, swap and `acct` (and every x32 call
 on x86_64).
 
-**macOS** (implemented; type-checked and linted, not yet run in CI): a
+**macOS** (verified in CI, macos-latest, CI run 38986502575): a
 `sandbox_init` profile that denies all network operations, `exec` and
 `fork`, and reading or writing any path except system library locations
 (`/System`, `/usr/lib`, `/usr/share`, dyld and time-zone data,
@@ -177,8 +175,8 @@ and the CSS parser alone are not yet fuzzed separately.
 
 ## Not yet done (required before RustLite is suitable for general browsing)
 
-1. Running the Linux and macOS sandboxes in CI, then narrowing them
-   (seccomp allowlist, deny-default macOS profile, memory limits).
+1. Narrowing the Linux and macOS sandboxes (seccomp allowlist,
+   deny-default macOS profile, memory limits).
 2. A graceful script timeout (today a hung script costs the whole
    renderer, after 10 s) and a heap limit outside Windows.
 3. CORS and CSP. Same-origin rules matter once scripts can fetch or read
@@ -187,5 +185,7 @@ and the CSS parser alone are not yet fuzzed separately.
 4. Coverage-guided fuzzing (cargo-fuzz on nightly) and decoder fuzzing.
 5. Download handling and safe file saving (downloads are refused today).
 6. ~~Dependency auditing in CI~~: `cargo deny` checks advisories,
-   licenses, bans and sources in the `audit` CI job (`deny.toml`); its
-   first run is pending.
+   licenses, bans and sources in the `audit` CI job (`deny.toml`). Its
+   first run flagged `rustybuzz` (RUSTSEC-2026-0206) and `ttf-parser`
+   (RUSTSEC-2026-0192) as unmaintained; both are acknowledged in
+   `deny.toml` until the font stack moves to `harfrust`/`skrifa`.
