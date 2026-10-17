@@ -61,6 +61,13 @@ fn sandboxed_renderer_cannot_touch_files_network_or_processes() {
             "denied",
             "no network connections: {lines:?}"
         );
+        if cfg!(target_os = "linux") {
+            assert_eq!(
+                get("unlisted_syscall"),
+                "denied",
+                "seccomp is default-deny (EPERM): {lines:?}"
+            );
+        }
     } else {
         assert_eq!(get("lockdown"), "false");
     }

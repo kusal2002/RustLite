@@ -16,9 +16,10 @@
 //!   (`RevertToSelf`); from then on only the restricted token applies.
 //! - **Linux:** [`lockdown`] sets `no_new_privs`, applies a Landlock ruleset
 //!   that handles every filesystem (and, where supported, TCP) access right
-//!   with no rules — so none is granted — and installs a seccomp-bpf filter
-//!   that refuses socket creation, `exec`, `ptrace` and other
-//!   kernel-surface system calls.
+//!   with no rules — so none is granted — and installs a default-deny
+//!   seccomp-bpf filter: only the system calls a renderer needs (pipe I/O,
+//!   memory without `PROT_EXEC`, threads, futexes, signals to itself,
+//!   clocks, randomness) are allowed, and the rest fail with `EPERM`.
 //! - **macOS:** [`lockdown`] enters a `sandbox_init` profile that denies
 //!   reading and writing files outside system library paths, all network
 //!   access, and process creation.
@@ -162,5 +163,19 @@ pub fn lockdown() -> Lockdown {
     #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         Lockdown::default()
+    }
+}
+
+/// Calls a system call the Linux renderer filter does not list and reports
+/// whether it failed with `EPERM`, as every unlisted call should after
+/// [`lockdown`]. `None` on other platforms.
+pub fn unlisted_syscall_denied() -> Option<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        Some(linux::unlisted_syscall_denied())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
     }
 }
