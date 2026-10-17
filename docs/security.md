@@ -60,14 +60,39 @@ a process and connecting to a local TCP listener all fail.
 - **Mitigations:** no dynamic code; no DLLs from remote or low-integrity
   locations.
 
-**Linux** (verified in CI, ubuntu-latest, CI run 38986502575): `no_new_privs`; a Landlock ruleset that handles every filesystem
-right (and TCP bind/connect on ABI 4+) and grants none; a seccomp-bpf filter
-(all threads) that kills the process for a foreign architecture and returns
-`EPERM` for `socket`, `execve`/`execveat`, `ptrace`,
-`process_vm_readv`/`writev`, mount and namespace calls, BPF,
-`perf_event_open`, `userfaultfd`, keyring, module and kexec calls,
-`io_uring`, handle-based opens, reboot, swap and `acct` (and every x32 call
-on x86_64).
+**Linux** (verified in CI, ubuntu-latest, CI run 39049665123): `no_new_privs`; a
+Landlock ruleset that handles every filesystem right (and TCP
+bind/connect on ABI 4+) and grants none; a default-deny seccomp-bpf filter
+(all threads, x86_64 and aarch64) that kills the process for a foreign
+architecture and allows only what a renderer uses, returning `EPERM` (not
+a kill, so a missing entry shows up as a failed call) for everything else,
+including every x32 call:
+
+- stdio pipe I/O and logging: `read`, `readv`, `write`, `writev`, `close`,
+  `fstat`, `poll`/`ppoll`; `fcntl` only `F_GETFD`/`F_SETFD`/`F_GETFL`/
+  `F_SETFL`; `ioctl` only `TCGETS` (`isatty`);
+- memory: `brk`, `munmap`, `mremap`, `madvise`, and `mmap`/`mprotect` only
+  without `PROT_EXEC` (no code is loaded after lockdown; Boa has no JIT);
+- threads: `clone` only with glibc's exact thread flags (no fork, `vfork`
+  or namespaces); `clone3` fails with `ENOSYS` so glibc falls back to
+  `clone`; `futex`, `set_robust_list`, `rseq`, `sched_yield`,
+  `sched_getaffinity`, `gettid`, `getpid`, `exit`, `exit_group`; `prctl`
+  only `PR_SET_NAME`/`PR_GET_NAME`;
+- signals within the process: `rt_sigreturn`, `rt_sigprocmask`,
+  `rt_sigaction`, `sigaltstack`, `restart_syscall`, and `tgkill` only to the
+  renderer's own process id;
+- clocks, sleep and randomness: `clock_gettime`, `clock_getres`,
+  `gettimeofday`, `time` (x86_64), `nanosleep`, `clock_nanosleep`,
+  `getrandom`.
+
+Path-based calls (`openat`, `newfstatat`/`statx`, `unlink`, `getcwd`),
+sockets, `exec`, `kill`, `ptrace` and the rest of the kernel surface are
+refused by the filter, so Landlock is now the second layer for files. CI
+runs the renderer tests under strace (`scripts/renderer-syscalls.sh`): in
+run 39049665123 the 6 traced renderers made only `read`, `write`, `brk`, `mmap`,
+`munmap`, `sigaltstack` and `exit_group` after lockdown, apart from the
+self-test's probes (`openat`, `getcwd`, `unlink`, `socket`, `getppid`),
+which all got `EPERM`.
 
 **macOS** (verified in CI, macos-latest, CI run 38986502575): a
 `sandbox_init` profile that denies all network operations, `exec` and
@@ -81,10 +106,9 @@ other crates forbid `unsafe` (ADR-0006).
 
 **Gaps:**
 
-- **Linux:** a denylist filter, not an allowlist: the remaining system
-  calls are reachable kernel attack surface; `fork`/`clone` are allowed
-  (a renderer can copy itself but not run another program); no memory
-  limit; Landlock needs kernel 5.13+ with Landlock enabled, otherwise the
+- **Linux:** the allowed calls (notably `futex`, `mmap`, `madvise`) are
+  still kernel attack surface; the allowlist runs on x86_64 in CI only
+  (aarch64 is compiled and clippy-checked, not run); no memory limit; Landlock needs kernel 5.13+ with Landlock enabled, otherwise the
   renderer logs an incomplete sandbox and file access stays open.
 - **macOS:** `(allow default)` with targeted denials: Mach services and
   IPC stay reachable; no memory limit.
@@ -175,8 +199,9 @@ and the CSS parser alone are not yet fuzzed separately.
 
 ## Not yet done (required before RustLite is suitable for general browsing)
 
-1. Narrowing the Linux and macOS sandboxes (seccomp allowlist,
-   deny-default macOS profile, memory limits).
+1. Narrowing the macOS sandbox (deny-default profile) and memory limits
+   outside Windows. (The Linux seccomp filter is an allowlist since
+   2026-10-17.)
 2. A graceful script timeout (today a hung script costs the whole
    renderer, after 10 s) and a heap limit outside Windows.
 3. CORS and CSP. Same-origin rules matter once scripts can fetch or read
