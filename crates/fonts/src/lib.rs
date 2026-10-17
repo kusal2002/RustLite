@@ -1,12 +1,16 @@
 //! Fonts for RustLite: system font discovery, CSS-style face selection,
 //! per-character fallback, shaping, metrics, and glyph rasterization.
 //!
-//! See `research/decisions/ADR-0002-font-stack.md` for the library choices.
+//! See `research/decisions/ADR-0002-font-stack.md` and
+//! `ADR-0007-font-stack-harfrust-skrifa.md` for the library choices.
 //! Everything here is infrastructure; line breaking and text layout live in
 //! `rustlite-layout`.
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
+
+use skrifa::MetadataProvider;
 
 mod raster;
 
@@ -35,7 +39,7 @@ pub struct FaceDescriptor {
 /// given to [`FontContext::brokered`].
 pub trait FontBroker {
     /// The font file (or collection) bytes of face `face`.
-    fn face_data(&mut self, face: u32) -> Option<Rc<[u8]>>;
+    fn face_data(&mut self, face: u32) -> Option<Arc<[u8]>>;
     /// A face covering `c` (see [`FontContext::fallback_face`]).
     fn fallback(&mut self, c: char, weight: u16, italic: bool) -> Option<u32>;
 }
@@ -100,33 +104,22 @@ pub struct ShapedSegment {
     pub advance: f32,
 }
 
-type ShaperFace<'a> = rustybuzz::Face<'a>;
-
-self_cell::self_cell!(
-    /// Font bytes plus the rustybuzz face parsed from them. Parsing the
-    /// shaping tables costs ~80 µs, ~25x shaping a word, so it is done once
-    /// per face instead of once per shaped string.
-    struct Shaper {
-        owner: Rc<[u8]>,
-        #[covariant]
-        dependent: ShaperFace,
-    }
-);
+/// The harfrust font of a face. It shares the face's bytes and keeps its
+/// shaping tables (layout lookups, cmap cache) parsed between calls, so they
+/// are read once per face instead of once per shaped string.
+struct Shaper(harfrust::Font);
 
 impl std::fmt::Debug for Shaper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Shaper")
-            .field("bytes", &self.borrow_owner().len())
-            .finish_non_exhaustive()
+        f.debug_struct("Shaper").finish_non_exhaustive()
     }
 }
 
 #[derive(Debug)]
 struct Face {
-    data: Rc<[u8]>,
+    data: Arc<[u8]>,
     index: u32,
-    /// `None` if rustybuzz cannot parse the face (it then shapes to nothing).
-    shaper: Option<Shaper>,
+    shaper: Shaper,
     units_per_em: f32,
     /// Width of the font's bounding box (`head` xMax - xMin), font units.
     bbox_width: f32,
@@ -322,7 +315,7 @@ impl FontContext {
 
     /// The data of face `position` (in [`FontContext::describe_faces`]
     /// order), for a brokered context in another process.
-    pub fn face_data(&mut self, position: u32) -> Option<Rc<[u8]>> {
+    pub fn face_data(&mut self, position: u32) -> Option<Arc<[u8]>> {
         let id = self.face_at(position)?;
         let fid = self.load(id)?;
         Some(self.faces[fid.0 as usize].data.clone())
@@ -475,23 +468,24 @@ impl FontContext {
             (self.broker.as_mut()?.0.face_data(position)?, index)
         } else {
             self.db
-                .with_face_data(id, |data, index| (Rc::<[u8]>::from(data), index))?
+                .with_face_data(id, |data, index| (Arc::<[u8]>::from(data), index))?
         };
-        let parsed = ttf_parser::Face::parse(&data, index).ok()?;
+        // The font shares `data` (no copy). Faces read-fonts cannot parse
+        // are never loaded, so selection moves on to another face.
+        let blob: Arc<dyn AsRef<[u8]> + Send + Sync> = Arc::new(data.clone());
+        let font = harfrust::Font::new(harfrust::font::Blob::Shared(blob), index)?;
+        let m = font.metrics();
+        // hhea, or the OS/2 typographic line when the font asks for it (or
+        // hhea is zero), as FreeType and Chromium choose.
+        let line = m.h_line().unwrap_or_default();
         let face = Face {
-            units_per_em: f32::from(parsed.units_per_em()),
-            bbox_width: {
-                let b = parsed.global_bounding_box();
-                f32::from(b.x_max) - f32::from(b.x_min)
-            },
-            ascent: f32::from(parsed.ascender()),
-            descent: -f32::from(parsed.descender()),
-            line_gap: f32::from(parsed.line_gap()),
-            shaper: Shaper::try_new(data.clone(), |d| {
-                rustybuzz::Face::from_slice(d, index).ok_or(())
-            })
-            .ok(),
-            data: data.clone(),
+            units_per_em: f32::from(m.units_per_em.max(1)),
+            bbox_width: (m.bounds.x_max - m.bounds.x_min).to_f64() as f32,
+            ascent: line.ascender.to_f64() as f32,
+            descent: -line.descender.to_f64() as f32,
+            line_gap: line.line_gap.to_f64() as f32,
+            shaper: Shaper(font),
+            data,
             index,
         };
         let fid = FontId(u32::try_from(self.faces.len()).ok()?);
@@ -556,9 +550,11 @@ impl FontContext {
         f.bbox_width * size / f.units_per_em
     }
 
-    fn covers(face: &ttf_parser::Face<'_>, c: char) -> bool {
+    fn covers(font: &harfrust::Font, c: char) -> bool {
         // Controls and default-ignorables never need a fallback face.
-        c.is_control() || matches!(c, '\u{200B}'..='\u{200F}') || face.glyph_index(c).is_some()
+        c.is_control()
+            || matches!(c, '\u{200B}'..='\u{200F}')
+            || font.charmap().map_unicode(c).is_some()
     }
 
     /// A face covering `c`, preferring well-known fallback families.
@@ -595,7 +591,12 @@ impl FontContext {
         let found = candidates.into_iter().find(|&id| {
             self.db
                 .with_face_data(id, |data, index| {
-                    ttf_parser::Face::parse(data, index).is_ok_and(|f| f.glyph_index(c).is_some())
+                    // Symbol-encoded faces (Wingdings) map Latin-1 codes to
+                    // pictographs; they are never a fallback for real text.
+                    skrifa::FontRef::from_index(data, index).is_ok_and(|f| {
+                        let charmap = f.charmap();
+                        !charmap.is_symbol() && charmap.map(c).is_some()
+                    })
                 })
                 .unwrap_or(false)
         });
@@ -656,11 +657,7 @@ impl FontContext {
                 let continues_cluster = runs.last().is_some() && is_cluster_continuation(c);
                 let font = if continues_cluster {
                     runs.last().map(|r| r.2).unwrap_or(primary)
-                } else if self.faces[primary.0 as usize]
-                    .shaper
-                    .as_ref()
-                    .is_none_or(|s| Self::covers(s.borrow_dependent(), c))
-                {
+                } else if Self::covers(&self.faces[primary.0 as usize].shaper.0, c) {
                     primary
                 } else {
                     self.fallback_for(c, weight, italic).unwrap_or(primary)
@@ -681,12 +678,13 @@ impl FontContext {
         let scale = size / f.units_per_em;
         let mut glyphs = Vec::new();
         let mut advance = 0.0;
-        if let Some(face) = f.shaper.as_ref().map(Shaper::borrow_dependent) {
-            let mut buffer = rustybuzz::UnicodeBuffer::new();
-            buffer.push_str(text);
-            buffer.guess_segment_properties();
-            let shaped = rustybuzz::shape(face, &[], buffer);
-            for (info, pos) in shaped.glyph_infos().iter().zip(shaped.glyph_positions()) {
+        let shaper = harfrust::ShaperFont::new(&f.shaper.0);
+        let mut buffer = harfrust::Buffer::new();
+        buffer.push_str(text);
+        buffer.guess_segment_properties();
+        // Shaping fails only on malformed tables; the segment is then empty.
+        if harfrust::shape(&shaper, &mut buffer, harfrust::ShapeOptions::new()).is_ok() {
+            for (info, pos) in buffer.glyph_infos().iter().zip(buffer.glyph_positions()) {
                 let g = ShapedGlyph {
                     // Glyph IDs are 16-bit in OpenType.
                     id: info.glyph_id as u16,
@@ -745,7 +743,7 @@ impl GlyphRasterizer for FontContext {
         let face = self.faces.get(font.0 as usize)?;
         // Parsing only reads the table directory; the glyph itself is decoded
         // on demand, so nothing per-face stays resident besides the file data.
-        let bitmap = ttf_parser::Face::parse(&face.data, face.index)
+        let bitmap = skrifa::FontRef::from_index(&face.data, face.index)
             .ok()
             .and_then(|parsed| raster::rasterize(&parsed, glyph, size))
             .map(Rc::new);

@@ -50,7 +50,8 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | SANDBOX-001 | Windows sandbox: renderer created suspended with a restricted lockdown token (deny-only groups, NULL restricting SID, no privileges, low integrity) and a warm-up token it drops; job object per renderer (memory cap, no child processes, UI limits, kill on close); mitigations | Tested (Windows) | `sandboxed_renderer_cannot_touch_files_network_or_processes` (write, read, process start and TCP connect denied); window runs: every renderer logged a complete lockdown at integrity 0x1000; ADR-0006 |
 | SANDBOX-002 | Linux (no_new_privs, Landlock, seccomp-bpf) and macOS (`sandbox_init`) renderer sandboxes | Tested (CI) | CI run 38986502575: the self-test (write, read, process start, TCP connect denied) and brokered-page tests pass on ubuntu-latest and macos-latest; every renderer logged a complete lockdown |
 | BROKER-001 | Renderers open no files: font face list, font data, fallback faces and local subresources come from the browser by upcall | Tested | `local_subresources_and_fonts_come_from_the_browser` (stylesheet, script, image, Sinhala fallback; a stylesheet outside the directory is refused; same image placement as a local page); `upcalls_are_answered_only_within_policy` |
-| SEC-003 | Dependency auditing (`cargo deny`: advisories, licenses, bans, sources) | Tested (CI) | `deny.toml`; `audit` CI job; first run found `rustybuzz`/`ttf-parser` unmaintained (acknowledged, migration planned) |
+| SEC-003 | Dependency auditing (`cargo deny`: advisories, licenses, bans, sources) | Tested (CI) | `deny.toml`; `audit` CI job; first run found `rustybuzz`/`ttf-parser` unmaintained, since replaced (FONT-003); no acknowledged advisories |
+| FONT-003 | Font stack on maintained crates: `harfrust` shaping, `skrifa` outlines, `read-fonts` metrics/cmap (rustybuzz, ttf-parser, self_cell removed) | Verified on reference browser (layout fixtures) / Tested | 19/19 layout fixtures still match Chromium 152; 302 workspace tests; raster parity vs the old path on 7 Windows fonts ([ADR-0007](../research/decisions/ADR-0007-font-stack-harfrust-skrifa.md)) |
 | CSS-002 | `font` shorthand, `min-/max-width/height`, `light-dark()` | Verified on reference browser (fixture set) | `font-shorthand` style and `min-max-sizes` layout fixtures match Chromium 152 |
 | JS-001 | JS runtime | Deferred (Phase 9) | — |
 
@@ -68,8 +69,6 @@ Tested · Verified on reference browser · Blocked · Deferred.
   documents only over http(s). No `data:` URLs, cookies, cache or JavaScript.
 - Renderer sandboxes are verified on Windows (locally) and on Linux and
   macOS (CI); see [security.md](security.md) for their gaps.
-- `rustybuzz` and `ttf-parser` are unmaintained (RustSec); migration to
-  `harfrust`/`skrifa` is planned.
 - No grid, tables or `position: sticky` (see compatibility.md).
 - CSS gaps (at-rules, `:not()`, `var()`, `calc()`, external sheets) are listed in
   [compatibility.md](compatibility.md#css-css-001--tested-verified-on-reference-browser).
@@ -367,4 +366,44 @@ Tested · Verified on reference browser · Blocked · Deferred.
   96.4 MB because each font crossing the pipe was copied three times in
   the renderer; fixed before this measurement.
 - **Not done:** seccomp allowlist; deny-default macOS profile; memory
-  limits outside Windows; replacing `rustybuzz`/`ttf-parser`.
+  limits outside Windows; replacing `rustybuzz`/`ttf-parser` (done in the
+  next entry).
+
+### 2026-10-17 — Font stack: harfrust + skrifa replace rustybuzz + ttf-parser
+
+- **Why:** `cargo deny` flagged `rustybuzz` (RUSTSEC-2026-0206) and
+  `ttf-parser` (RUSTSEC-2026-0192) as unmaintained. Proposal, prototype
+  numbers and risks in ADR-0007; the dependency change was approved by the
+  user before implementation.
+- **What:** shaping on `harfrust 0.14` (an owned `Font` per face replaces
+  the `self_cell` shaping cache); metrics and cmap from its `read-fonts`
+  model; outlines for our rasterizer from `skrifa 0.48`. `fontdb 0.24`
+  stays (it no longer uses `ttf-parser`). `FontBroker::face_data` and
+  `FontContext::face_data` return `Arc<[u8]>`. Fallback search skips
+  symbol-encoded faces (Wingdings), as before.
+- **Evidence:** a scratch prototype gave identical glyph IDs, advances and
+  line metrics for Latin and Sinhala on 5 Windows fonts, shaping 5–48 %
+  faster, and ~13–19 KB heap per face instead of ~205–267 KB. The
+  rasterizer compared against the old ttf-parser path on 7 fonts × 3
+  sizes: 70,720 of 70,734 glyph bitmaps identical; the rest differ by
+  ≤5/255 except one unnamed Times New Roman glyph that skrifa places at
+  its `hmtx` side bearing, as FreeType does. That case showed the bitmap
+  must be sized from the drawn outline, not the `glyf` header box, which
+  is now done.
+- **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 302
+  passed, including 19/19 layout fixtures vs Chromium 152. Cross-target:
+  `rustlite-fonts` passes clippy for x86_64 Linux and aarch64 macOS, and
+  winit 0.30.13 with the new feature set compiles for Linux; the full
+  workspace could not be cross-checked locally (`ring` needs a C cross
+  compiler), so CI covers Linux and macOS.
+- **Measurements:** release `rustlite.exe` 11,795,456 → 12,236,288 bytes
+  (+0.42 MiB, +3.7 %; the prototype estimated +0.85 MiB).
+- **cargo deny:** both ignores removed from `deny.toml`; not installed
+  locally, so CI runs the check. The new crates have no RustSec entries and
+  their licenses are all on the allow-list. `ttf-parser` also came in
+  through `winit` → `sctk-adwaita` → `ab_glyph` (Wayland title-bar text);
+  with the user's go-ahead winit now uses `wayland-csd-adwaita-notitle`
+  instead of its default `wayland-csd-adwaita`, so Wayland compositors
+  without server-side decorations (GNOME) draw the title bar without its
+  text. `ttf-parser`, `owned_ttf_parser`, `ab_glyph`, `rustybuzz` and
+  `self_cell` are no longer in `Cargo.lock`.

@@ -104,7 +104,9 @@ the comparison understates the gain. Findings and causes:
 - **Shaping:** `rustybuzz::Face::from_slice` took 83 µs per call (parsing
   GSUB/GPOS) versus 3.5 µs to shape a word, and was called per word. Faces
   are now parsed once per loaded font (`self_cell`), and shaped words are
-  cached (≤48-byte strings, 16,384 entries, cleared when full).
+  cached (≤48-byte strings, 16,384 entries, cleared when full). Since
+  ADR-0007, shaping uses `harfrust`, whose owned `Font` keeps parsed layout
+  data per face without `self_cell` (~15 KB instead of ~200 KB per face).
 - **Style:** attribute selectors had no bucket, so every `[attr]` rule was
   tried on every element; descendant selectors walked ancestors for every
   candidate rule. Rules are now bucketed by attribute name, and each rule

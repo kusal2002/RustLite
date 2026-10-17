@@ -31,8 +31,8 @@ repaint, HTTP revalidation (`ETag`/`Last-Modified`), faster HTML parsing
   Linux (Landlock + seccomp) and macOS (`sandbox_init`) sandboxes;
   `cargo deny` in CI~~ — done 2026-10-17, verified on all three platforms.
   Next: seccomp allowlist, deny-default macOS profile, memory limits
-  outside Windows; move fonts from the unmaintained `rustybuzz`/`ttf-parser`
-  to `harfrust`/`skrifa`.
+  outside Windows. ~~Move fonts from the unmaintained `rustybuzz`/`ttf-parser`
+  to `harfrust`/`skrifa`~~ — done 2026-10-17 (ADR-0007).
 - Layout: grid, tables, `position: sticky`, `auto` margins on absolutely
   positioned boxes, floats placed mid-line.
 - POST forms, `<textarea>`, `<select>`, `fetch`; a graceful script timeout

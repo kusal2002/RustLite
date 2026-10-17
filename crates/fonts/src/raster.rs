@@ -1,4 +1,4 @@
-//! Glyph rasterization: outlines from `ttf-parser`, rendered to an 8-bit
+//! Glyph rasterization: outlines from `skrifa`, rendered to an 8-bit
 //! coverage mask with an exact-area scanline accumulator.
 //!
 //! The accumulator is the signed-area technique popularized by font-rs
@@ -11,7 +11,10 @@
 //! is drawn (unlike rasterizers that pre-parse every glyph of a face).
 
 use rustlite_paint::GlyphBitmap;
-use ttf_parser::{GlyphId, OutlineBuilder};
+use skrifa::instance::{LocationRef, Size};
+use skrifa::outline::pen::{ControlBoundsPen, PathElement};
+use skrifa::outline::{DrawSettings, OutlinePen};
+use skrifa::{GlyphId, MetadataProvider};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct P {
@@ -111,7 +114,7 @@ fn segments(deviation: f32) -> usize {
     (1.0 + (3.0 * deviation).sqrt()).clamp(1.0, 64.0) as usize
 }
 
-impl OutlineBuilder for Accumulator {
+impl OutlinePen for Accumulator {
     fn move_to(&mut self, x: f32, y: f32) {
         let p = self.to_bitmap(x, y);
         self.start = p;
@@ -167,20 +170,61 @@ impl OutlineBuilder for Accumulator {
     }
 }
 
+/// Draws a recorded outline into `pen`.
+fn replay(path: &[PathElement], pen: &mut impl OutlinePen) {
+    for element in path {
+        match *element {
+            PathElement::MoveTo { x, y } => pen.move_to(x, y),
+            PathElement::LineTo { x, y } => pen.line_to(x, y),
+            PathElement::QuadTo { cx0, cy0, x, y } => pen.quad_to(cx0, cy0, x, y),
+            PathElement::CurveTo {
+                cx0,
+                cy0,
+                cx1,
+                cy1,
+                x,
+                y,
+            } => pen.curve_to(cx0, cy0, cx1, cy1, x, y),
+            PathElement::Close => pen.close(),
+        }
+    }
+}
+
 /// Glyphs larger than this many pixels per side are not rasterized (bounds
 /// memory for absurd font sizes).
 const MAX_GLYPH_PX: f32 = 2048.0;
 
 /// Rasterizes `glyph` of `face` at `size` px. `None` for glyphs without
 /// outlines (spaces) or with absurd sizes.
-pub(crate) fn rasterize(face: &ttf_parser::Face<'_>, glyph: u16, size: f32) -> Option<GlyphBitmap> {
-    let id = GlyphId(glyph);
-    let bbox = face.glyph_bounding_box(id)?;
-    let scale = size / f32::from(face.units_per_em());
-    let x_min = (f32::from(bbox.x_min) * scale).floor() - 1.0;
-    let x_max = (f32::from(bbox.x_max) * scale).ceil() + 1.0;
-    let y_min = (f32::from(bbox.y_min) * scale).floor() - 1.0;
-    let y_max = (f32::from(bbox.y_max) * scale).ceil() + 1.0;
+pub(crate) fn rasterize(face: &skrifa::FontRef<'_>, glyph: u16, size: f32) -> Option<GlyphBitmap> {
+    let id = GlyphId::new(u32::from(glyph));
+    // The outline in font units (the accumulator scales it), recorded once
+    // so the bitmap can be sized from it. skrifa places TrueType outlines by
+    // the `hmtx` side bearing, as FreeType does, so the `glyf` header box
+    // can disagree with what is drawn.
+    let mut path: Vec<PathElement> = Vec::new();
+    face.outline_glyphs()
+        .get(id)?
+        .draw(
+            DrawSettings::unhinted(Size::unscaled(), LocationRef::default()),
+            &mut path,
+        )
+        .ok()?;
+    let mut bounds = ControlBoundsPen::new();
+    replay(&path, &mut bounds);
+    let bbox = bounds.bounding_box()?;
+    // Empty glyphs (spaces) draw nothing or a degenerate box.
+    if bbox.x_min >= bbox.x_max || bbox.y_min >= bbox.y_max {
+        return None;
+    }
+    let units_per_em = face
+        .metrics(Size::unscaled(), LocationRef::default())
+        .units_per_em;
+    let scale = size / f32::from(units_per_em.max(1));
+    let x_min = (bbox.x_min * scale).floor() - 1.0;
+    let x_max = (bbox.x_max * scale).ceil() + 1.0;
+    let y_min = (bbox.y_min * scale).floor() - 1.0;
+    let y_max = (bbox.y_max * scale).ceil() + 1.0;
     let (w, h) = (x_max - x_min, y_max - y_min);
     if !(w > 0.0 && h > 0.0 && w < MAX_GLYPH_PX && h < MAX_GLYPH_PX) {
         return None;
@@ -198,7 +242,7 @@ pub(crate) fn rasterize(face: &ttf_parser::Face<'_>, glyph: u16, size: f32) -> O
         start: P { x: 0.0, y: 0.0 },
         last: P { x: 0.0, y: 0.0 },
     };
-    face.outline_glyph(id, &mut acc)?;
+    replay(&path, &mut acc);
 
     let mut coverage = vec![0u8; width * height];
     let mut sum = 0.0f32;

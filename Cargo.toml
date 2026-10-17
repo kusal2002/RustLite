@@ -46,17 +46,19 @@ arboard = { version = "3.7.0", default-features = false }
 boa_engine = { version = "0.22.0", default-features = false, features = ["annex-b"] }
 encoding_rs = "0.8.42"
 fontdb = "0.24"
+# Shaping (HarfBuzz port) and outlines/metrics; both on fontations read-fonts (ADR-0007).
+harfrust = "0.14.0"
+skrifa = { version = "0.48.0", default-features = false, features = ["std"] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif"] }
-rustybuzz = "0.20.1"
-self_cell = "1.2.0"
-ttf-parser = "0.25.1"
 softbuffer = { version = "0.4.8", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
 thiserror = "2.0"
 tracing = "0.1.44"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls", "platform-verifier", "gzip"] }
 url = "2.5.8"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
-winit = "0.30"
+# No default features: same as the defaults except Wayland title bars are drawn
+# without text (`-notitle`), which keeps ab_glyph and ttf-parser out (ADR-0007).
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11", "wayland", "wayland-dlopen", "wayland-csd-adwaita-notitle"] }
 # Raw Win32 bindings for the renderer sandbox only (already in the tree via winit).
 libc = "0.2.190"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }

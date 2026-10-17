@@ -187,5 +187,5 @@ and the CSS parser alone are not yet fuzzed separately.
 6. ~~Dependency auditing in CI~~: `cargo deny` checks advisories,
    licenses, bans and sources in the `audit` CI job (`deny.toml`). Its
    first run flagged `rustybuzz` (RUSTSEC-2026-0206) and `ttf-parser`
-   (RUSTSEC-2026-0192) as unmaintained; both are acknowledged in
-   `deny.toml` until the font stack moves to `harfrust`/`skrifa`.
+   (RUSTSEC-2026-0192) as unmaintained; the font stack moved to
+   `harfrust`/`skrifa` (ADR-0007) and `deny.toml` has no ignores left.

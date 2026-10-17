@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed — 2026-10-17 (font stack, ADR-0007)
+- Shaping moved from `rustybuzz` to `harfrust` 0.14; font metrics and cmap
+  come from its `read-fonts` model, and glyph outlines for the rasterizer
+  from `skrifa` 0.48. `ttf-parser` and `self_cell` are gone; `fontdb`
+  stays. Layout fixtures are unchanged (19/19 match Chromium 152).
+- About 200 KB less heap per loaded font face; shaping is faster; the
+  release binary is 0.42 MiB larger.
+- Glyph bitmaps are sized from the drawn outline, so glyphs that skrifa
+  places at their `hmtx` side bearing (as FreeType does) are not clipped.
+- `FontBroker::face_data` and `FontContext::face_data` return `Arc<[u8]>`.
+
+- `winit` uses `wayland-csd-adwaita-notitle` instead of its default
+  `wayland-csd-adwaita`: client-side Wayland title bars (GNOME) no longer
+  show the window title, and `ab_glyph`/`ttf-parser` leave the tree.
+
+### Removed — 2026-10-17
+- The `deny.toml` acknowledgements for RUSTSEC-2026-0206 (rustybuzz) and
+  RUSTSEC-2026-0192 (ttf-parser).
+
 ### Added — 2026-10-17 (sandbox hardening)
 - Renderers open no files: the browser sends its font face list and
   answers upcalls for font data, fallback faces and a local document's
