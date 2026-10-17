@@ -54,6 +54,8 @@ Performance targets are **hypotheses** until measured on a defined setup.
 | 2026-10-17 | Release binary size with advanced layout, renderer processes and sandbox (Phase 10) | bytes | 11,759,616 (11.2 MiB) | file size |
 | 2026-10-17 | Form typing and submission with the page in a sandboxed renderer | working set, browser + renderer | 22.8 MB + 14.9 MB | scripted window run, PowerShell `Get-Process` |
 | 2026-10-17 | Three tabs (`layout.html`, `sample.html`, `interactive.html`), one renderer each | processes / total working set | 4 / 64.8 MB (browser 23.2 MB; renderers 10.3, 15.2, 16.1 MB) | scripted window run, PowerShell `Get-Process`; all renderers exited with the browser |
+| 2026-10-17 | Three tabs with brokered fonts and restricted-token renderers | processes / total working set | 4 / 70.8 MB (browser 28.7 MB; renderers 10.4, 15.1, 16.5 MB) | scripted window run, PowerShell `Get-Process`; the browser now holds the font data it serves |
+| 2026-10-17 | Release binary size with the broker and sandbox launch | bytes | 11,795,456 (11.25 MiB) | file size |
 | 2026-10-17 | `article-400` warm layout after floats/positioning/flex support | change vs. Phase 8 baseline | about +10–20% over repeated runs (one outlier run ×1.93) | `rustlite-bench` compare; static-position tracking is skipped unless a box is out of flow |
 
 Rows above are single runs. From Phase 8 on, pipeline timings come from the

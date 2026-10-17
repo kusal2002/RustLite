@@ -12,6 +12,42 @@ mod raster;
 
 use rustlite_paint::{FontId, GlyphBitmap, GlyphRasterizer};
 
+/// One installed face, described without its data, so another process can
+/// select fonts without scanning or opening font files (see
+/// [`FontContext::brokered`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct FaceDescriptor {
+    pub path: std::path::PathBuf,
+    /// Face index within a collection file.
+    pub index: u32,
+    pub families: Vec<String>,
+    pub post_script_name: String,
+    pub weight: u16,
+    /// 0 normal, 1 italic, 2 oblique.
+    pub style: u8,
+    /// CSS `font-stretch` keyword number, 1 (ultra-condensed) to 9.
+    pub stretch: u16,
+    pub monospaced: bool,
+}
+
+/// Supplies font data to a context that may not open font files (a
+/// sandboxed renderer). Faces are named by their position in the list
+/// given to [`FontContext::brokered`].
+pub trait FontBroker {
+    /// The font file (or collection) bytes of face `face`.
+    fn face_data(&mut self, face: u32) -> Option<Rc<[u8]>>;
+    /// A face covering `c` (see [`FontContext::fallback_face`]).
+    fn fallback(&mut self, c: char, weight: u16, italic: bool) -> Option<u32>;
+}
+
+struct Broker(Box<dyn FontBroker>);
+
+impl std::fmt::Debug for Broker {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FontBroker")
+    }
+}
+
 /// A family in a CSS `font-family` list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Family<'a> {
@@ -160,6 +196,9 @@ pub struct FontContext {
     /// Shaped short strings (words), per (primary font, weight, italic, size bits).
     shape_cache: HashMap<ShapeKey, HashMap<Box<str>, Rc<[ShapedSegment]>>>,
     shape_cache_len: usize,
+    /// Set for brokered contexts: font data comes from here, never from
+    /// files.
+    broker: Option<Broker>,
 }
 
 /// Shaping cache key: primary font, weight, italic, size (`f32` bits).
@@ -189,7 +228,112 @@ impl FontContext {
             glyph_cache: HashMap::new(),
             shape_cache: HashMap::new(),
             shape_cache_len: 0,
+            broker: None,
         }
+    }
+
+    /// The installed faces, in a stable order, for [`FontContext::brokered`]
+    /// in another process. Faces loaded from memory are left out.
+    pub fn describe_faces(&self) -> Vec<FaceDescriptor> {
+        self.db
+            .faces()
+            .filter_map(|f| {
+                let path = match &f.source {
+                    fontdb::Source::File(p) | fontdb::Source::SharedFile(p, _) => p.clone(),
+                    fontdb::Source::Binary(_) => return None,
+                };
+                Some(FaceDescriptor {
+                    path,
+                    index: f.index,
+                    families: f.families.iter().map(|(n, _)| n.clone()).collect(),
+                    post_script_name: f.post_script_name.clone(),
+                    weight: f.weight.0,
+                    style: match f.style {
+                        fontdb::Style::Normal => 0,
+                        fontdb::Style::Italic => 1,
+                        fontdb::Style::Oblique => 2,
+                    },
+                    stretch: f.stretch.to_number(),
+                    monospaced: f.monospaced,
+                })
+            })
+            .collect()
+    }
+
+    /// A context that selects among `faces` (from [`FontContext::describe_faces`]
+    /// in another process) and gets their data from `broker`. It never opens
+    /// font files.
+    pub fn brokered(faces: Vec<FaceDescriptor>, broker: Box<dyn FontBroker>) -> Self {
+        let mut ctx = Self::new();
+        for f in faces {
+            let stretch = match f.stretch {
+                1 => fontdb::Stretch::UltraCondensed,
+                2 => fontdb::Stretch::ExtraCondensed,
+                3 => fontdb::Stretch::Condensed,
+                4 => fontdb::Stretch::SemiCondensed,
+                6 => fontdb::Stretch::SemiExpanded,
+                7 => fontdb::Stretch::Expanded,
+                8 => fontdb::Stretch::ExtraExpanded,
+                9 => fontdb::Stretch::UltraExpanded,
+                _ => fontdb::Stretch::Normal,
+            };
+            ctx.db.push_face_info(fontdb::FaceInfo {
+                id: fontdb::ID::dummy(),
+                source: fontdb::Source::File(f.path),
+                index: f.index,
+                families: f
+                    .families
+                    .into_iter()
+                    .map(|n| (n, fontdb::Language::English_UnitedStates))
+                    .collect(),
+                post_script_name: f.post_script_name,
+                style: match f.style {
+                    1 => fontdb::Style::Italic,
+                    2 => fontdb::Style::Oblique,
+                    _ => fontdb::Style::Normal,
+                },
+                weight: fontdb::Weight(f.weight),
+                stretch,
+                monospaced: f.monospaced,
+            });
+        }
+        ctx.configure_generics();
+        ctx.broker = Some(Broker(broker));
+        ctx
+    }
+
+    /// Position of a database face in [`FontContext::describe_faces`] order.
+    fn face_position(&self, id: fontdb::ID) -> Option<u32> {
+        let pos = self
+            .db
+            .faces()
+            .filter(|f| !matches!(f.source, fontdb::Source::Binary(_)))
+            .position(|f| f.id == id)?;
+        u32::try_from(pos).ok()
+    }
+
+    fn face_at(&self, position: u32) -> Option<fontdb::ID> {
+        self.db
+            .faces()
+            .filter(|f| !matches!(f.source, fontdb::Source::Binary(_)))
+            .nth(position as usize)
+            .map(|f| f.id)
+    }
+
+    /// The data of face `position` (in [`FontContext::describe_faces`]
+    /// order), for a brokered context in another process.
+    pub fn face_data(&mut self, position: u32) -> Option<Rc<[u8]>> {
+        let id = self.face_at(position)?;
+        let fid = self.load(id)?;
+        Some(self.faces[fid.0 as usize].data.clone())
+    }
+
+    /// The position (in [`FontContext::describe_faces`] order) of a face
+    /// covering `c`, for a brokered context in another process.
+    pub fn fallback_face(&mut self, c: char, weight: u16, italic: bool) -> Option<u32> {
+        let fid = self.fallback_for(c, weight, italic)?;
+        let (&id, _) = self.by_db_id.iter().find(|(_, f)| **f == fid)?;
+        self.face_position(id)
     }
 
     /// Empties the word shaping cache (benchmarks measure cold layout with it).
@@ -306,33 +450,18 @@ impl FontContext {
         }
     }
 
-    /// Where face `font` came from: its font file and index within it, for
-    /// naming the face to another process. `None` for faces loaded from
-    /// memory.
-    pub fn face_source(&self, font: FontId) -> Option<(std::path::PathBuf, u32)> {
-        let (db_id, _) = self.by_db_id.iter().find(|(_, f)| **f == font)?;
-        let face = self.db.face(*db_id)?;
-        match &face.source {
-            fontdb::Source::File(path) | fontdb::Source::SharedFile(path, _) => {
-                Some((path.clone(), face.index))
-            }
-            fontdb::Source::Binary(_) => None,
-        }
+    /// Position of loaded face `font` in [`FontContext::describe_faces`]
+    /// order, for naming it to another process. `None` for faces loaded
+    /// from memory.
+    pub fn position_of(&self, font: FontId) -> Option<u32> {
+        let (&id, _) = self.by_db_id.iter().find(|(_, f)| **f == font)?;
+        self.face_position(id)
     }
 
-    /// The face of this context that comes from `path` at `index`. Only
-    /// faces already in the database (installed system fonts) are found:
-    /// paths named by another process are never opened.
-    pub fn font_for_source(&mut self, path: &std::path::Path, index: u32) -> Option<FontId> {
-        let id = self
-            .db
-            .faces()
-            .find(|f| {
-                f.index == index
-                    && matches!(&f.source,
-                        fontdb::Source::File(p) | fontdb::Source::SharedFile(p, _) if p == path)
-            })?
-            .id;
+    /// Loads the face at `position` in [`FontContext::describe_faces`]
+    /// order (one this process already knows; nothing is opened by name).
+    pub fn font_at_position(&mut self, position: u32) -> Option<FontId> {
+        let id = self.face_at(position)?;
         self.load(id)
     }
 
@@ -340,9 +469,14 @@ impl FontContext {
         if let Some(&fid) = self.by_db_id.get(&id) {
             return Some(fid);
         }
-        let (data, index) = self
-            .db
-            .with_face_data(id, |data, index| (Rc::<[u8]>::from(data), index))?;
+        let (data, index) = if self.broker.is_some() {
+            let index = self.db.face(id)?.index;
+            let position = self.face_position(id)?;
+            (self.broker.as_mut()?.0.face_data(position)?, index)
+        } else {
+            self.db
+                .with_face_data(id, |data, index| (Rc::<[u8]>::from(data), index))?
+        };
         let parsed = ttf_parser::Face::parse(&data, index).ok()?;
         let face = Face {
             units_per_em: f32::from(parsed.units_per_em()),
@@ -431,6 +565,15 @@ impl FontContext {
     fn fallback_for(&mut self, c: char, weight: u16, italic: bool) -> Option<FontId> {
         if let Some(&cached) = self.fallback_cache.get(&(c, weight, italic)) {
             return cached;
+        }
+        if let Some(broker) = &mut self.broker {
+            let result = broker
+                .0
+                .fallback(c, weight, italic)
+                .and_then(|position| self.face_at(position))
+                .and_then(|id| self.load(id));
+            self.fallback_cache.insert((c, weight, italic), result);
+            return result;
         }
         let preferred: Vec<fontdb::ID> = FALLBACK_FAMILIES
             .iter()

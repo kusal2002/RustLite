@@ -49,13 +49,25 @@ GET submission URLs, script-visible events and their order, and the
 
 `apps/desktop/tests/renderer.rs` runs the real `rustlite` binary as a
 renderer: a page in a renderer process (scripts, timers, clicks, typing,
-find, same-site vs. cross-site process reuse), a hung renderer killed by
-the watchdog, a renderer sending garbage, and the Windows sandbox
-self-test (`--renderer-selftest <dir>`: low integrity, in a job, file
-write denied, process start denied, reads allowed). On Linux and macOS
-the self-test checks that lockdown reports "not sandboxed".
-`crates/browser-core` has unit tests for IPC framing and message decoding
-(truncated, oversized and non-finite input).
+find, same-site vs. cross-site process reuse), a local page whose
+stylesheet, script, image and fallback font come through the browser
+broker (compared with a single-process page; a `../` stylesheet must be
+refused), a hung renderer killed by the watchdog, a renderer sending
+garbage, and the sandbox self-test (`--renderer-selftest <dir> <port>`:
+after lockdown, writing a file, reading a directory, starting a process
+and connecting to a local TCP listener must all fail; low integrity on
+Windows). The same test runs on Linux and macOS in CI.
+`crates/browser-core` has unit tests for IPC framing, message decoding
+(truncated, oversized and non-finite input) and upcall policy;
+`crates/sandbox` checks token creation, command-line quoting (Windows) and
+the seccomp program (Linux).
+
+## Dependency audit
+
+`cargo deny check` (CI job `audit`, configuration in `deny.toml`):
+RustSec advisories (vulnerable, unmaintained, yanked), a permissive
+license allowlist, wildcard dependencies, and crates.io as the only
+source.
 
 ## Fuzzing
 

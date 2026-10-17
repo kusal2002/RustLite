@@ -80,16 +80,20 @@ What was built, and where it differs from the target above:
   the browser (debugging, tests).
 - One renderer per tab per **site**; a cross-site navigation starts a new
   process, `about:blank` uses none.
-- **Display lists** cross the boundary (not pixels). Font faces are sent as
-  (file path, face index) and mapped only onto faces the browser already
-  indexed; anything else is dropped. Images are sent once per id.
+- **Display lists** cross the boundary (not pixels). Fonts are named by
+  their position in the face list the browser sent; anything else is
+  dropped. Images are sent once per id.
 - **Network loads stay in the browser**: `Tab` fetches documents,
   stylesheets, scripts and images over HTTP(S) and hands bytes to the
   page; the renderer decodes images itself, so decoder bugs land in the
-  sandbox. **Deviation:** for a local `file:` document the renderer still
-  reads the document directory's stylesheets, scripts and images itself
-  (same document-directory rule as before), so renderers keep read access;
-  moving those reads to the browser is a follow-up.
+  sandbox.
+- **Renderers open no files** (2026-10-17): the browser sends its font
+  face list at start, and the renderer makes *upcalls* during a request
+  for font data, a fallback face for a character, or a local document's
+  stylesheet, script or image by reference text. The browser answers under
+  its own policy (listed faces only; files inside the document's directory,
+  which the renderer never learns). This is what lets the OS sandbox deny
+  all file access (ADR-0006).
 - **Watchdog**: a renderer that does not answer within 10 s (also the
   total time a script can run per request), exits, or sends a malformed
   frame is killed and replaced by a local "Page not available" page; the

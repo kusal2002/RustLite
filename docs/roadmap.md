@@ -27,16 +27,18 @@ repaint, HTTP revalidation (`ETag`/`Last-Modified`), faster HTML parsing
 (~23 µs per element on the large benchmark).
 
 **Phase 10 follow-ups:**
-- Sandboxes on Linux (namespaces + seccomp-bpf) and macOS (`sandbox_init`);
-  AppContainer on Windows so renderers lose file reads and network.
-- Local `file:` subresources read by the browser instead of the renderer.
+- ~~Brokered fonts and local files; restricted-token renderers on Windows;
+  Linux (Landlock + seccomp) and macOS (`sandbox_init`) sandboxes;
+  `cargo deny` in CI~~ — done 2026-10-17 (Unix sandboxes and the audit job
+  await their first CI run). Next: seccomp allowlist, deny-default macOS
+  profile, memory limits outside Windows.
 - Layout: grid, tables, `position: sticky`, `auto` margins on absolutely
   positioned boxes, floats placed mid-line.
 - POST forms, `<textarea>`, `<select>`, `fetch`; a graceful script timeout
   instead of losing the renderer.
 
-**Before broad use:** sandboxes on every platform, CORS/CSP, dependency
-auditing (see [security.md](security.md)).
+**Before broad use:** sandboxes verified on every platform, CORS/CSP (see
+[security.md](security.md)).
 
 Still open from earlier phases: inline backgrounds/borders, 3D border
 shading, broken-image rendering, GPU backend.

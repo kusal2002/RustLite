@@ -1,0 +1,42 @@
+# cargo-deny configuration (run in CI by the `audit` job; locally:
+# `cargo install cargo-deny && cargo deny check`).
+
+[graph]
+all-features = false
+
+[advisories]
+version = 2
+# Security advisories always fail; unmaintained crates are reported for
+# direct and indirect dependencies alike.
+unmaintained = "all"
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# Permissive licenses only (the dependency tree as of 2026-10-17).
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

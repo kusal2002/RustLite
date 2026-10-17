@@ -47,7 +47,10 @@ Tested · Verified on reference browser · Blocked · Deferred.
 | FORM-001 | Form controls (text, password, buttons, checkbox, radio): layout, paint, focus, editing, keyboard events, GET submission | Verified on reference browser (layout) / Tested | `form-controls` layout fixture vs Chromium 152; `interaction.rs` (9 tests); scripted window typing |
 | LAYOUT-002 | Positioning (relative/absolute/fixed, z-index), floats and clearance, inline-block/inline-flex, flexbox, `box-sizing`, hyphen break opportunities; style properties for all of them | Verified on reference browser (fixture set) | `positioning`, `floats`, `inline-block`, `flexbox`, `box-sizing`, `hyphen-breaks` layout fixtures and `layout-properties` style fixture match Chromium 152 (≤0.02 px); 36,000 extra release fuzz cases |
 | PROC-001 | Renderer process per tab per site, framed IPC, watchdog and crash fallback, `--single-process` | Tested | `apps/desktop/tests/renderer.rs` (end-to-end page, hung renderer, garbage renderer); IPC/message decode unit tests; scripted window runs with 3 tabs |
-| SANDBOX-001 | Windows sandbox: job object per renderer (memory cap, no child processes, UI limits, kill on close) and low-integrity, privilege-free, mitigated renderer token | Tested (Windows) | `sandboxed_renderer_cannot_write_files_or_start_processes`; every renderer in window runs logged a complete lockdown at integrity 0x1000; ADR-0006 |
+| SANDBOX-001 | Windows sandbox: renderer created suspended with a restricted lockdown token (deny-only groups, NULL restricting SID, no privileges, low integrity) and a warm-up token it drops; job object per renderer (memory cap, no child processes, UI limits, kill on close); mitigations | Tested (Windows) | `sandboxed_renderer_cannot_touch_files_network_or_processes` (write, read, process start and TCP connect denied); window runs: every renderer logged a complete lockdown at integrity 0x1000; ADR-0006 |
+| SANDBOX-002 | Linux (no_new_privs, Landlock, seccomp-bpf) and macOS (`sandbox_init`) renderer sandboxes | Implemented (not yet run) | Type-checked and clippy-clean for `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`; the same self-test runs in CI on the next push |
+| BROKER-001 | Renderers open no files: font face list, font data, fallback faces and local subresources come from the browser by upcall | Tested | `local_subresources_and_fonts_come_from_the_browser` (stylesheet, script, image, Sinhala fallback; a stylesheet outside the directory is refused; same image placement as a local page); `upcalls_are_answered_only_within_policy` |
+| SEC-003 | Dependency auditing (`cargo deny`: advisories, licenses, bans, sources) | Implemented (first CI run pending) | `deny.toml`; `audit` CI job |
 | CSS-002 | `font` shorthand, `min-/max-width/height`, `light-dark()` | Verified on reference browser (fixture set) | `font-shorthand` style and `min-max-sizes` layout fixtures match Chromium 152 |
 | JS-001 | JS runtime | Deferred (Phase 9) | — |
 
@@ -55,7 +58,7 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 | Platform | Build | Tests | Window | Notes |
 |---|---|---|---|---|
-| Windows 11 x64 (MSVC) | ✅ | ✅ 299/299 | ✅ | Ryzen 5 5600G, Radeon iGPU; sandboxed renderers |
+| Windows 11 x64 (MSVC) | ✅ | ✅ 302/302 | ✅ | Ryzen 5 5600G, Radeon iGPU; sandboxed renderers (restricted token) |
 | Linux x64 | ✅ CI | ✅ CI (run 38864693788) | Unverified | No display in CI; text layout goldens skip (no Times New Roman) |
 | macOS | ✅ CI | ✅ CI (run 38864693788) | Unverified | Layout text goldens pin Times New Roman and skip if its metrics differ from the reference machine |
 
@@ -63,8 +66,8 @@ Tested · Verified on reference browser · Blocked · Deferred.
 
 - Local documents load images/stylesheets only from their own directory; network
   documents only over http(s). No `data:` URLs, cookies, cache or JavaScript.
-- Renderer processes are sandboxed on Windows only, and can still read
-  files and reach the network there (see [security.md](security.md)).
+- Renderer sandboxes are verified on Windows; the Linux and macOS ones
+  have not run yet (see [security.md](security.md)).
 - No grid, tables or `position: sticky` (see compatibility.md).
 - CSS gaps (at-rules, `:not()`, `var()`, `calc()`, external sheets) are listed in
   [compatibility.md](compatibility.md#css-css-001--tested-verified-on-reference-browser).
@@ -330,3 +333,32 @@ Tested · Verified on reference browser · Blocked · Deferred.
   their subresources in the renderer; `auto` margins for absolutely
   positioned boxes; grid, tables, sticky positioning.
 - **Next:** see [roadmap.md](roadmap.md).
+
+### 2026-10-17 — Sandbox hardening: brokered files and fonts, restricted token, Unix sandboxes, dependency audit
+
+- **Scope chosen with the user:** the security follow-ups first; Linux and
+  macOS sandboxes with `libc` and our own code (asked and decided).
+- **Broker:** renderers no longer read font files or local subresources.
+  The browser sends its face list at start and answers upcalls for font
+  data, fallback faces and local files (only inside the document's
+  directory). Display lists name fonts by face-list position.
+- **Windows:** renderers start suspended with a restricted lockdown token
+  and a warm-up impersonation token they drop before reading input; the
+  job is assigned before they run; only their stdio handles are inherited.
+- **Linux/macOS:** Landlock + seccomp-bpf and a `sandbox_init` profile,
+  applied by the renderer at start.
+- **CI:** `cargo deny` job (advisories, licenses, bans, sources).
+- **Verification:** the sandbox self-test now also requires file reads and
+  a TCP connect to fail — all four probes denied on Windows 11. A page with
+  a local stylesheet, script and image renders identically through the
+  broker, a `../` stylesheet is refused, and a Sinhala fallback face is
+  chosen by the browser. Window run: three tabs, every renderer locked
+  down, all exited with the browser. Linux/macOS code compiles and passes
+  clippy for those targets; **not run yet** (needs a push).
+- **Tests:** fmt ✅ · clippy `-D warnings` ✅ · `cargo test --workspace` ✅ 302 passed.
+- **Measurements:** binary 11.25 MiB; three tabs 70.8 MB working set
+  (browser 28.7 MB, renderers 10.4/15.1/16.5 MB). A first run showed
+  96.4 MB because each font crossing the pipe was copied three times in
+  the renderer; fixed before this measurement.
+- **Not done:** CI runs of the Unix sandboxes and the audit job; seccomp
+  allowlist; deny-default macOS profile; memory limits outside Windows.

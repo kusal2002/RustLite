@@ -101,7 +101,17 @@ impl ApplicationHandler<AppEvent> for App {
             debug_overlay: self.options.debug_overlay,
             exit_after_frames: self.options.exit_after_frames,
             javascript: self.options.javascript,
-            renderer: (!self.options.single_process).then(crate::renderer::spawner),
+            renderer: if self.options.single_process {
+                None
+            } else {
+                match crate::renderer::spawner() {
+                    Ok(spawner) => Some(spawner),
+                    Err(e) => {
+                        tracing::error!(error = %e, "cannot locate the renderer executable; pages run in this process");
+                        None
+                    }
+                }
+            },
         };
         match BrowserWindow::new(event_loop, self.loader.clone(), initial, config) {
             Ok(window) => self.window = Some(window),

@@ -5,26 +5,32 @@
 //!
 //! The protocol is request/response, driven by the browser. Every reply
 //! carries a [`State`] snapshot so most getters need no round trip.
+//!
+//! The renderer opens no files: at start it receives the browser's list of
+//! installed font faces, and while handling a request it may make
+//! *upcalls* — font data, a fallback face for a character, or a local
+//! document's stylesheet, script or image by its reference text — which
+//! the browser answers under its own policy (only faces it listed; only
+//! files inside the document's directory, which the renderer never learns).
 //! Display lists name fonts by renderer-local ids; the first time an id
-//! appears the renderer announces its font file and face index, and the
-//! browser maps it to a face *it already knows* (it never opens a path a
-//! renderer names). Images travel once per id.
+//! appears the renderer announces its position in the face list. Images
+//! travel once per id.
 //!
 //! Everything a renderer sends is untrusted: decoding is bounds-checked,
 //! URLs it returns go through the browser's navigation policy, and a
 //! renderer that crashes, sends garbage or stops answering within
 //! [`RemotePage::timeout`] is killed and replaced by an error page.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin};
 use std::rc::Rc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
 use std::time::{Duration, Instant};
 
 use rustlite_dom::NodeId;
-use rustlite_fonts::FontContext;
+use rustlite_fonts::{FaceDescriptor, FontBroker, FontContext};
 use rustlite_layout::{FindMatch, RectF, TreeSize};
 use rustlite_net::{Destination, Url};
 use rustlite_paint::{
@@ -32,6 +38,7 @@ use rustlite_paint::{
 };
 
 use crate::ipc::{DecodeError, Reader, Writer, read_frame, write_frame};
+use crate::local::{LocalFiles, LocalKind};
 use crate::{InputOutcome, MemoryReport, Page, PageKey};
 
 /// How long the browser waits for any renderer reply before declaring the
@@ -41,6 +48,18 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 
 // ----- messages ---------------------------------------------------------------
 
+/// First byte of every renderer frame: a reply ends the request, an upcall
+/// asks the browser for something first.
+const REPLY: u8 = 0;
+const UPCALL: u8 = 1;
+/// First byte of the browser's answer to an upcall (distinct from every
+/// request tag, so the two cannot be confused).
+const ANSWER: u8 = 0xA5;
+
+const UPCALL_FONT_DATA: u8 = 0;
+const UPCALL_FALLBACK: u8 = 1;
+const UPCALL_LOCAL_FILE: u8 = 2;
+
 #[derive(Debug, Clone, PartialEq)]
 enum Request {
     Init {
@@ -48,11 +67,13 @@ enum Request {
         height: u32,
         scale: f32,
         javascript: bool,
+        faces: Vec<FaceDescriptor>,
     },
     LoadHtml {
         url: String,
         html: String,
-        base_dir: Option<String>,
+        /// A local document: its subresources are available by upcall.
+        local: bool,
     },
     SetViewport {
         width: u32,
@@ -110,8 +131,9 @@ struct State {
 #[derive(Debug, Clone, PartialEq)]
 struct Frame {
     list: DisplayList,
-    /// Fonts used for the first time: (renderer id, file, face index).
-    faces: Vec<(u32, String, u32)>,
+    /// Fonts used for the first time: (renderer id, position in the face
+    /// list the browser sent).
+    faces: Vec<(u32, u32)>,
     /// Images sent for the first time: (id, image).
     images: Vec<(u32, Rc<ImageData>)>,
 }
@@ -201,22 +223,33 @@ impl Request {
                 height,
                 scale,
                 javascript,
+                faces,
             } => {
                 w.u8(0);
                 w.u32(*width);
                 w.u32(*height);
                 w.f32(*scale);
                 w.bool(*javascript);
+                w.len(faces.len());
+                for f in faces {
+                    w.str(&f.path.to_string_lossy());
+                    w.u32(f.index);
+                    w.len(f.families.len());
+                    for name in &f.families {
+                        w.str(name);
+                    }
+                    w.str(&f.post_script_name);
+                    w.u32(u32::from(f.weight));
+                    w.u8(f.style);
+                    w.u32(u32::from(f.stretch));
+                    w.bool(f.monospaced);
+                }
             }
-            Request::LoadHtml {
-                url,
-                html,
-                base_dir,
-            } => {
+            Request::LoadHtml { url, html, local } => {
                 w.u8(1);
                 w.str(url);
                 w.str(html);
-                w.opt_str(base_dir.as_deref());
+                w.bool(*local);
             }
             Request::SetViewport { width, height } => {
                 w.u8(2);
@@ -290,11 +323,35 @@ impl Request {
                 height: r.u32()?,
                 scale: r.f32()?,
                 javascript: r.bool()?,
+                faces: {
+                    let mut faces = Vec::new();
+                    for _ in 0..r.len(26)? {
+                        let path = PathBuf::from(r.str()?);
+                        let index = r.u32()?;
+                        let mut families = Vec::new();
+                        for _ in 0..r.len(4)? {
+                            families.push(r.str()?);
+                        }
+                        faces.push(FaceDescriptor {
+                            path,
+                            index,
+                            families,
+                            post_script_name: r.str()?,
+                            weight: u16::try_from(r.u32()?)
+                                .map_err(|_| DecodeError::Invalid("weight"))?,
+                            style: r.u8()?,
+                            stretch: u16::try_from(r.u32()?)
+                                .map_err(|_| DecodeError::Invalid("stretch"))?,
+                            monospaced: r.bool()?,
+                        });
+                    }
+                    faces
+                },
             },
             1 => Request::LoadHtml {
                 url: r.str()?,
                 html: r.str()?,
-                base_dir: r.opt_str()?,
+                local: r.bool()?,
             },
             2 => Request::SetViewport {
                 width: r.u32()?,
@@ -416,10 +473,9 @@ impl Payload {
             Payload::Frame(f) => {
                 w.u8(2);
                 w.len(f.faces.len());
-                for (id, path, index) in &f.faces {
+                for (id, position) in &f.faces {
                     w.u32(*id);
-                    w.str(path);
-                    w.u32(*index);
+                    w.u32(*position);
                 }
                 w.len(f.images.len());
                 for (id, img) in &f.images {
@@ -551,8 +607,8 @@ impl Payload {
             1 => Payload::Bool(r.bool()?),
             2 => {
                 let mut faces = Vec::new();
-                for _ in 0..r.len(12)? {
-                    faces.push((r.u32()?, r.str()?, r.u32()?));
+                for _ in 0..r.len(8)? {
+                    faces.push((r.u32()?, r.u32()?));
                 }
                 let mut images: Vec<(u32, Rc<ImageData>)> = Vec::new();
                 for _ in 0..r.len(16)? {
@@ -697,6 +753,83 @@ impl Payload {
 
 // ----- renderer side --------------------------------------------------------------
 
+/// The renderer's end of the pipe, shared by the request loop and the
+/// upcalls made while a request is handled.
+struct Channel {
+    input: Box<dyn Read>,
+    output: Box<dyn Write>,
+}
+
+type SharedChannel = Rc<RefCell<Channel>>;
+
+impl Channel {
+    /// Sends upcall `body` and waits for the browser's answer. `None` if the
+    /// browser broke the protocol (the request then degrades, and the next
+    /// read fails).
+    fn upcall(&mut self, body: &[u8]) -> Option<Vec<u8>> {
+        let mut frame = Vec::with_capacity(body.len() + 1);
+        frame.push(UPCALL);
+        frame.extend_from_slice(body);
+        write_frame(&mut self.output, &frame).ok()?;
+        let mut answer = read_frame(&mut self.input).ok()??;
+        if answer.first() != Some(&ANSWER) {
+            return None;
+        }
+        // Answers carry whole font files: shift in place, no second copy.
+        answer.remove(0);
+        Some(answer)
+    }
+}
+
+/// The optional byte string of an upcall answer, borrowed from it.
+fn decode_opt_bytes(answer: &[u8]) -> Option<Option<&[u8]>> {
+    let mut r = Reader::new(answer);
+    let bytes = match r.bool().ok()? {
+        true => Some(r.bytes().ok()?),
+        false => None,
+    };
+    r.finished().then_some(bytes)
+}
+
+/// Font data from the browser.
+struct BrokeredFonts(SharedChannel);
+
+impl FontBroker for BrokeredFonts {
+    fn face_data(&mut self, face: u32) -> Option<Rc<[u8]>> {
+        let mut w = Writer::default();
+        w.u8(UPCALL_FONT_DATA);
+        w.u32(face);
+        let answer = self.0.borrow_mut().upcall(&w.buf)?;
+        decode_opt_bytes(&answer)?.map(Rc::from)
+    }
+
+    fn fallback(&mut self, c: char, weight: u16, italic: bool) -> Option<u32> {
+        let mut w = Writer::default();
+        w.u8(UPCALL_FALLBACK);
+        w.u32(u32::from(c));
+        w.u32(u32::from(weight));
+        w.bool(italic);
+        let answer = self.0.borrow_mut().upcall(&w.buf)?;
+        let mut r = Reader::new(&answer);
+        let face = r.opt_u32().ok()?;
+        r.finished().then_some(face)?
+    }
+}
+
+/// A local document's subresources, read by the browser.
+struct BrokeredFiles(SharedChannel);
+
+impl LocalFiles for BrokeredFiles {
+    fn read(&mut self, kind: LocalKind, href: &str) -> Option<Vec<u8>> {
+        let mut w = Writer::default();
+        w.u8(UPCALL_LOCAL_FILE);
+        w.u8(kind.to_u8());
+        w.str(href);
+        let answer = self.0.borrow_mut().upcall(&w.buf)?;
+        decode_opt_bytes(&answer)?.map(<[u8]>::to_vec)
+    }
+}
+
 /// Per-process bookkeeping of what the browser already knows.
 #[derive(Default)]
 struct Session {
@@ -729,28 +862,36 @@ fn node(raw: u32) -> Option<NodeId> {
     NodeId::from_raw(raw)
 }
 
-fn handle(page: &mut Page, session: &mut Session, req: Request) -> Payload {
+fn handle(
+    page: &mut Page,
+    session: &mut Session,
+    channel: &SharedChannel,
+    req: Request,
+) -> Payload {
     match req {
         Request::Init {
             width,
             height,
             scale,
             javascript,
+            faces,
         } => {
+            page.set_fonts(FontContext::brokered(
+                faces,
+                Box::new(BrokeredFonts(channel.clone())),
+            ));
             page.set_viewport(Size::new(width, height));
             page.set_device_scale(scale);
             page.set_javascript_enabled(javascript);
             Payload::None
         }
-        Request::LoadHtml {
-            url,
-            html,
-            base_dir,
-        } => {
+        Request::LoadHtml { url, html, local } => {
             *session = Session::default();
-            match base_dir {
-                Some(dir) => page.load_html_with_base(url, &html, Some(Path::new(&dir))),
-                None => page.load_html(url, &html),
+            if local {
+                let mut files = BrokeredFiles(channel.clone());
+                page.load_html_with_files(url, &html, Some(&mut files));
+            } else {
+                page.load_html(url, &html);
             }
             Payload::None
         }
@@ -772,9 +913,9 @@ fn handle(page: &mut Page, session: &mut Session, req: Request) -> Payload {
                 match item {
                     DisplayItem::Text { run, .. } => {
                         if session.announced_faces.insert(run.font.0)
-                            && let Some((path, index)) = page.fonts().face_source(run.font)
+                            && let Some(position) = page.fonts().position_of(run.font)
                         {
-                            faces.push((run.font.0, path.to_string_lossy().into_owned(), index));
+                            faces.push((run.font.0, position));
                         }
                     }
                     DisplayItem::Image { image, .. } => {
@@ -845,37 +986,85 @@ fn input_payload(out: InputOutcome) -> Payload {
 }
 
 /// The renderer process main loop: serves requests from `input` until it
-/// closes. Each request gets exactly one reply on `output`.
-pub fn serve(input: &mut impl Read, output: &mut impl Write) -> io::Result<()> {
+/// closes. Each request gets exactly one reply on `output`, possibly after
+/// upcalls. Fonts come from the browser (the `Init` request), so this
+/// process never scans or opens font files.
+pub fn serve(input: impl Read + 'static, output: impl Write + 'static) -> io::Result<()> {
+    let channel: SharedChannel = Rc::new(RefCell::new(Channel {
+        input: Box::new(input),
+        output: Box::new(output),
+    }));
     let mut page = Page::new(Size::new(800, 600));
+    page.set_fonts(FontContext::new());
     let mut session = Session::default();
-    while let Some(frame) = read_frame(input)? {
+    loop {
+        let Some(frame) = read_frame(&mut channel.borrow_mut().input)? else {
+            return Ok(());
+        };
         let req = Request::decode(&frame)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        let payload = handle(&mut page, &mut session, req);
+        let payload = handle(&mut page, &mut session, &channel, req);
         let mut w = Writer::default();
+        w.u8(REPLY);
         snapshot(&mut page).encode(&mut w);
         payload.encode(&mut w, &session.images);
-        write_frame(output, &w.buf)?;
+        write_frame(&mut channel.borrow_mut().output, &w.buf)?;
     }
-    Ok(())
 }
 
 // ----- browser side -----------------------------------------------------------------
 
-/// A started renderer: the process (stdin and stdout piped) and whatever
-/// must live as long as it (its sandbox job; dropping that kills it).
+/// A renderer process as the browser controls it.
+pub trait RendererProcess {
+    fn id(&self) -> u32;
+    /// Ends the process (and reaps it where the OS needs that).
+    fn kill(&mut self);
+}
+
+impl RendererProcess for std::process::Child {
+    fn id(&self) -> u32 {
+        std::process::Child::id(self)
+    }
+
+    fn kill(&mut self) {
+        let _ = std::process::Child::kill(self);
+        let _ = self.wait();
+    }
+}
+
+/// A started renderer: the process and the pipe ends connected to its
+/// stdin and stdout.
 pub struct Spawned {
-    pub child: Child,
-    pub guard: Option<Box<dyn std::any::Any>>,
+    pub process: Box<dyn RendererProcess>,
+    pub stdin: Box<dyn Write>,
+    pub stdout: Box<dyn Read + Send>,
+}
+
+impl Spawned {
+    /// A renderer started with `std::process::Command` (stdin and stdout
+    /// piped).
+    pub fn from_child(mut child: std::process::Child) -> io::Result<Self> {
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::other("renderer stdin not piped"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::other("renderer stdout not piped"))?;
+        Ok(Self {
+            process: Box::new(child),
+            stdin: Box::new(stdin),
+            stdout: Box::new(stdout),
+        })
+    }
 }
 
 impl std::fmt::Debug for Spawned {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Spawned")
-            .field("pid", &self.child.id())
-            .field("guarded", &self.guard.is_some())
-            .finish()
+            .field("pid", &self.process.id())
+            .finish_non_exhaustive()
     }
 }
 
@@ -883,16 +1072,14 @@ impl std::fmt::Debug for Spawned {
 pub type Spawner = Rc<dyn Fn() -> io::Result<Spawned>>;
 
 struct Process {
-    child: Child,
-    stdin: ChildStdin,
+    process: Box<dyn RendererProcess>,
+    stdin: Box<dyn Write>,
     replies: Receiver<Option<Vec<u8>>>,
-    _guard: Option<Box<dyn std::any::Any>>,
 }
 
 impl Drop for Process {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.process.kill();
     }
 }
 
@@ -912,7 +1099,10 @@ pub struct RemotePage {
     /// site gets a fresh process.
     site: Option<String>,
     fonts: Option<FontContext>,
-    face_sources: HashMap<u32, (PathBuf, u32)>,
+    /// Renderer font id → position in the face list sent at `Init`.
+    face_positions: HashMap<u32, u32>,
+    /// Directory of the current local document (answers file upcalls).
+    base_dir: Option<PathBuf>,
     font_map: HashMap<u32, Option<FontId>>,
     images: HashMap<u32, Rc<ImageData>>,
     raw_list: DisplayList,
@@ -954,7 +1144,8 @@ impl RemotePage {
             javascript: true,
             site: None,
             fonts: None,
-            face_sources: HashMap::new(),
+            face_positions: HashMap::new(),
+            base_dir: None,
             font_map: HashMap::new(),
             images: HashMap::new(),
             raw_list: DisplayList::new(),
@@ -972,21 +1163,17 @@ impl RemotePage {
 
     /// The renderer's process id, if one is running.
     pub fn process_id(&self) -> Option<u32> {
-        self.process.as_ref().map(|p| p.child.id())
+        self.process.as_ref().map(|p| p.process.id())
     }
 
     fn start(&mut self) -> io::Result<()> {
         self.process = None;
-        let Spawned { mut child, guard } = (self.spawn)()?;
+        let Spawned {
+            process,
+            stdin,
+            mut stdout,
+        } = (self.spawn)()?;
         self.spawn_count += 1;
-        let stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| io::Error::other("renderer stdin not piped"))?;
-        let mut stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| io::Error::other("renderer stdout not piped"))?;
         let (tx, rx) = channel();
         std::thread::Builder::new()
             .name("rustlite-renderer-reader".into())
@@ -1006,21 +1193,25 @@ impl RemotePage {
                 }
             })?;
         self.process = Some(Process {
-            child,
+            process,
             stdin,
             replies: rx,
-            _guard: guard,
         });
         // Renderer-local ids mean nothing to a new process.
-        self.face_sources.clear();
+        self.face_positions.clear();
         self.font_map.clear();
         self.images.clear();
         self.list_valid = false;
+        let faces = self
+            .fonts
+            .get_or_insert_with(FontContext::with_system_fonts)
+            .describe_faces();
         let init = Request::Init {
             width: self.viewport.width,
             height: self.viewport.height,
             scale: self.device_scale,
             javascript: self.javascript,
+            faces,
         };
         self.call(init);
         Ok(())
@@ -1063,18 +1254,42 @@ impl RemotePage {
             self.fail("exited");
             return None;
         }
-        let reply = match process.replies.recv_timeout(self.timeout) {
-            Ok(Some(frame)) => frame,
-            Ok(None) | Err(RecvTimeoutError::Disconnected) => {
-                self.fail("crashed");
-                return None;
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                self.fail(&format!(
-                    "stopped responding for {} s and was stopped",
-                    self.timeout.as_secs()
-                ));
-                return None;
+        // One deadline for the whole request, upcalls included.
+        let deadline = Instant::now() + self.timeout;
+        let reply = loop {
+            let process = self.process.as_mut()?;
+            let wait = deadline.saturating_duration_since(Instant::now());
+            let frame = match process.replies.recv_timeout(wait) {
+                Ok(Some(frame)) => frame,
+                Ok(None) | Err(RecvTimeoutError::Disconnected) => {
+                    self.fail("crashed");
+                    return None;
+                }
+                Err(RecvTimeoutError::Timeout) => {
+                    self.fail(&format!(
+                        "stopped responding for {} s and was stopped",
+                        self.timeout.as_secs()
+                    ));
+                    return None;
+                }
+            };
+            match frame.split_first() {
+                Some((&REPLY, rest)) => break rest.to_vec(),
+                Some((&UPCALL, body)) => {
+                    let Some(answer) = self.answer_upcall(body) else {
+                        self.fail("sent an invalid message");
+                        return None;
+                    };
+                    let process = self.process.as_mut()?;
+                    if write_frame(&mut process.stdin, &answer).is_err() {
+                        self.fail("exited");
+                        return None;
+                    }
+                }
+                _ => {
+                    self.fail("sent an invalid message");
+                    return None;
+                }
             }
         };
         let mut r = Reader::new(&reply);
@@ -1096,6 +1311,64 @@ impl RemotePage {
                 None
             }
         }
+    }
+
+    /// Answers a renderer's upcall under the browser's policy: only faces
+    /// from the list it sent, only files inside the current local
+    /// document's directory. `None` for a malformed upcall.
+    fn answer_upcall(&mut self, body: &[u8]) -> Option<Vec<u8>> {
+        fn opt_bytes(w: &mut Writer, bytes: Option<&[u8]>) {
+            match bytes {
+                Some(b) => {
+                    w.bool(true);
+                    w.bytes(b);
+                }
+                None => w.bool(false),
+            }
+        }
+        let mut r = Reader::new(body);
+        let mut w = Writer::default();
+        w.u8(ANSWER);
+        match r.u8().ok()? {
+            UPCALL_FONT_DATA => {
+                let face = r.u32().ok()?;
+                if !r.finished() {
+                    return None;
+                }
+                let data = self
+                    .fonts
+                    .get_or_insert_with(FontContext::with_system_fonts)
+                    .face_data(face);
+                opt_bytes(&mut w, data.as_deref());
+            }
+            UPCALL_FALLBACK => {
+                let c = char::from_u32(r.u32().ok()?)?;
+                let weight = u16::try_from(r.u32().ok()?).ok()?;
+                let italic = r.bool().ok()?;
+                if !r.finished() {
+                    return None;
+                }
+                let face = self
+                    .fonts
+                    .get_or_insert_with(FontContext::with_system_fonts)
+                    .fallback_face(c, weight, italic);
+                w.opt_u32(face);
+            }
+            UPCALL_LOCAL_FILE => {
+                let kind = LocalKind::from_u8(r.u8().ok()?)?;
+                let href = r.str().ok()?;
+                if !r.finished() {
+                    return None;
+                }
+                let data = self
+                    .base_dir
+                    .as_deref()
+                    .and_then(|dir| crate::local::read_in_dir(dir, kind, &href));
+                opt_bytes(&mut w, data.as_deref());
+            }
+            _ => return None,
+        }
+        Some(w.buf)
     }
 
     fn fallback_mut(&mut self) -> Option<&mut Page> {
@@ -1134,10 +1407,11 @@ impl RemotePage {
             self.process = None;
         }
         self.site = site;
+        self.base_dir = base_dir.map(Path::to_path_buf);
         self.call(Request::LoadHtml {
             url,
             html: html.to_owned(),
-            base_dir: base_dir.map(|d| d.to_string_lossy().into_owned()),
+            local: base_dir.is_some(),
         });
         self.list_valid = false;
     }
@@ -1286,8 +1560,8 @@ impl RemotePage {
         }
         if !self.list_valid && self.process.is_some() {
             if let Some(Payload::Frame(frame)) = self.call(Request::Paint) {
-                for (id, path, index) in frame.faces {
-                    self.face_sources.insert(id, (PathBuf::from(path), index));
+                for (id, position) in frame.faces {
+                    self.face_positions.insert(id, position);
                 }
                 for (id, image) in frame.images {
                     self.images.insert(id, image);
@@ -1317,9 +1591,9 @@ impl RemotePage {
                     run,
                 } => {
                     let mapped = *self.font_map.entry(run.font.0).or_insert_with(|| {
-                        self.face_sources
+                        self.face_positions
                             .get(&run.font.0)
-                            .and_then(|(path, index)| fonts.font_for_source(path, *index))
+                            .and_then(|&position| fonts.font_at_position(position))
                     });
                     if let Some(font) = mapped {
                         out.push(DisplayItem::Text {
@@ -1499,11 +1773,21 @@ mod tests {
                 height: 20,
                 scale: 1.5,
                 javascript: false,
+                faces: vec![FaceDescriptor {
+                    path: PathBuf::from("C:/Windows/Fonts/arial.ttf"),
+                    index: 0,
+                    families: vec!["Arial".into()],
+                    post_script_name: "ArialMT".into(),
+                    weight: 400,
+                    style: 1,
+                    stretch: 5,
+                    monospaced: false,
+                }],
             },
             Request::LoadHtml {
                 url: "https://a.test/".into(),
                 html: "<p>x".into(),
-                base_dir: Some("C:/x".into()),
+                local: true,
             },
             Request::SetImage {
                 node: 7,
@@ -1550,7 +1834,7 @@ mod tests {
         images.insert(Rc::as_ptr(&image) as usize, (1, image.clone()));
         let payload = Payload::Frame(Frame {
             list,
-            faces: vec![(3, "C:/f.ttf".into(), 0)],
+            faces: vec![(3, 17)],
             images: vec![(1, image)],
         });
         let mut w = Writer::default();
@@ -1578,5 +1862,34 @@ mod tests {
         w.len(0);
         w.u32(u32::MAX);
         assert!(Payload::decode(&mut Reader::new(&w.buf), &HashMap::new()).is_err());
+    }
+
+    #[test]
+    fn upcalls_are_answered_only_within_policy() {
+        let spawn: Spawner = Rc::new(|| Err(io::Error::other("not used")));
+        let mut page = RemotePage::new(spawn, Size::new(10, 10));
+        page.set_fonts(FontContext::new());
+        let absent = vec![ANSWER, 0];
+        // Unknown face position; no local document (so no file is read).
+        assert_eq!(
+            page.answer_upcall(&[UPCALL_FONT_DATA, 9, 9, 0, 0]),
+            Some(absent.clone())
+        );
+        let mut w = Writer::default();
+        w.u8(UPCALL_LOCAL_FILE);
+        w.u8(LocalKind::Stylesheet.to_u8());
+        w.str("Cargo.toml");
+        assert_eq!(page.answer_upcall(&w.buf), Some(absent));
+        // Malformed: unknown kind, trailing bytes, invalid char, bad kind.
+        assert_eq!(page.answer_upcall(&[42]), None);
+        assert_eq!(page.answer_upcall(&[UPCALL_FONT_DATA, 0, 0, 0, 0, 1]), None);
+        assert_eq!(
+            page.answer_upcall(&[UPCALL_FALLBACK, 0, 0xD8, 0, 0, 0x90, 1, 0, 0, 0]),
+            None
+        );
+        assert_eq!(
+            page.answer_upcall(&[UPCALL_LOCAL_FILE, 7, 0, 0, 0, 0]),
+            None
+        );
     }
 }

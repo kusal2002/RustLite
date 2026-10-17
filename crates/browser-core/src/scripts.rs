@@ -9,6 +9,8 @@
 use rustlite_dom::{Document, NodeId};
 use rustlite_script::ScriptHost;
 
+use crate::local::{LocalFiles, LocalKind};
+
 /// Largest script source accepted (local file or network body).
 pub const MAX_SCRIPT_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -37,9 +39,8 @@ pub(crate) struct Scripts {
 
 impl Scripts {
     /// Classic scripts of `dom` in document order. External ones are read
-    /// from `base_dir` for local documents (same directory policy as
-    /// images), or left `Pending` for the network.
-    pub fn collect(dom: &Document, base_dir: Option<&std::path::Path>) -> Self {
+    /// from `files` for local documents, or left `Pending` for the network.
+    pub fn collect(dom: &Document, mut files: Option<&mut dyn LocalFiles>) -> Self {
         let mut entries = Vec::new();
         for n in dom.descendants(dom.root()) {
             if !dom.is_element_named(n, "script")
@@ -53,8 +54,8 @@ impl Scripts {
                     "inline script".to_owned(),
                 ),
                 Some(src) => {
-                    let source = match base_dir {
-                        Some(dir) => read_local(dir, src),
+                    let source = match files.as_deref_mut() {
+                        Some(files) => read_local(files, src),
                         None => Source::Pending,
                     };
                     (source, src.trim().to_owned())
@@ -96,14 +97,8 @@ impl Scripts {
     }
 }
 
-fn read_local(base_dir: &std::path::Path, src: &str) -> Source {
-    let bytes = crate::images::resolve_local(base_dir, src)
-        .ok()
-        .and_then(|path| {
-            let size = std::fs::metadata(&path).ok()?.len();
-            (size <= MAX_SCRIPT_BYTES).then(|| std::fs::read(&path).ok())?
-        });
-    match bytes {
+fn read_local(files: &mut dyn LocalFiles, src: &str) -> Source {
+    match files.read(LocalKind::Script, src) {
         Some(b) => Source::Ready(rustlite_net::decode_text(&b, None).text),
         None => {
             tracing::warn!(src, "script not loaded");

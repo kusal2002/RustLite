@@ -1,7 +1,9 @@
 # ADR-0006: A sandbox crate with scoped `unsafe` (windows-sys)
 
-- Status: Accepted (implemented on Windows, Phase 10)
-- Date: 2026-10-17
+- Status: Accepted. Windows: restricted token + job, verified. Linux
+  (Landlock + seccomp) and macOS (`sandbox_init`): implemented, awaiting
+  their first CI run.
+- Date: 2026-10-17 (revised the same day: restricted token, Unix sandboxes)
 
 ## Context
 
@@ -30,45 +32,60 @@ Options considered (asked and decided with the user, 2026-10-17):
   function and carries a `SAFETY:` note on its arguments and handles.
   Handles are owned by an RAII `Handle` that closes them once.
 - Every other crate keeps `unsafe_code = "forbid"`.
-- Dependency: `windows-sys 0.61` with only `Win32_Foundation`,
-  `Win32_Security`, `Win32_System_JobObjects`, `Win32_System_Threading`.
-  Windows-only (`cfg(windows)`), MIT/Apache-2.0, no build scripts beyond
-  import libraries.
-- Policy on Windows:
-  - **Browser side**: one job object per renderer — committed memory cap
-    (1 GiB default), `ActiveProcessLimit = 1` (no child processes),
-    kill-on-job-close (renderers die with the browser, even on a crash),
-    die on unhandled exception, and UI restrictions (clipboard read/write,
-    desktop, global atoms, user handles, system parameters, display
-    settings, exit windows). The child is assigned right after spawn,
-    before it receives any input; if assignment fails the child is killed.
-  - **Renderer side** (`lockdown()`, before reading the first message):
-    disable all token privileges, lower the token to **low integrity**
-    (no writes to the user's files, registry or medium-integrity
-    processes), forbid dynamic code (no new executable memory), and
-    restrict image loads (no DLLs from remote or low-integrity locations,
-    prefer System32).
-- The public API is platform-neutral (`RendererJob`, `lockdown`,
-  `integrity_level`, `in_job`, `SUPPORTED`); on Linux and macOS it is a
-  no-op that reports "not sandboxed".
+- Dependencies: `windows-sys 0.61` (`Win32_Foundation`, `Win32_Security`,
+  `Win32_System_Console`, `Win32_System_JobObjects`, `Win32_System_Pipes`,
+  `Win32_System_Threading`; Windows only) and `libc 0.2` (Unix only; asked
+  and decided with the user on 2026-10-17 over the `landlock`/`seccompiler`
+  crates, to keep the policy small and in one place). Both MIT/Apache-2.0.
+- The public API is platform-neutral: `launch(exe, args, memory_limit)`
+  returns the process and its stdin/stdout pipe ends; `lockdown()` reports
+  a `Lockdown { filesystem, network, processes, privileges, integrity }`.
+- **Windows** (the model of Chromium's sandbox):
+  - The browser creates the renderer **suspended** with
+    `CreateProcessAsUserW` and a **lockdown token**: user and all groups
+    deny-only, the NULL SID as the only restricting SID, privileges
+    removed, low integrity. Access checks grant nothing, so files, the
+    registry, devices and sockets (Winsock fails to start) are closed.
+  - Only the renderer's stdin/stdout/stderr handles are inherited
+    (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`).
+  - It is assigned to its **job object** before it runs: committed memory
+    cap (1 GiB), `ActiveProcessLimit = 1`, kill on job close, die on
+    unhandled exception, UI restrictions.
+  - Its first thread gets a **warm-up impersonation token** (restricted to
+    the user's own SIDs, low integrity) so the loader can map the
+    executable and DLLs; `lockdown()` turns on the dynamic-code and
+    image-load mitigations and calls `RevertToSelf`, after which only the
+    lockdown token applies.
+- **Linux** (`lockdown()`): `PR_SET_NO_NEW_PRIVS`; Landlock with every
+  filesystem right handled (and TCP on ABI 4+) and no rule granting any;
+  a seccomp-bpf denylist (synchronized to all threads) returning `EPERM`
+  for sockets, `exec`, `ptrace`, cross-process memory, mounts and
+  namespaces, BPF, perf, `userfaultfd`, keyrings, modules, kexec,
+  `io_uring` and handle-based opens; a foreign architecture kills the
+  process. No user namespaces: unprivileged ones are disabled on common
+  distributions (Ubuntu 24.04).
+- **macOS** (`lockdown()`): `sandbox_init` with a profile denying network,
+  `exec`/`fork`, and file reads and writes outside system library paths.
 
-## Why not AppContainer or a restricted token now
+## Why not AppContainer
 
-Both need the renderer to be *started* with a new token
-(`CreateProcessAsUser` / a `PROC_THREAD_ATTRIBUTE_LIST`), which
-`std::process::Command` cannot do; we would have to replace process
-spawning and stdio piping with our own `unsafe` code. Self-lowering to low
-integrity plus the job object gets most of the write and process
-protection with a far smaller `unsafe` surface. AppContainer (which also
-removes read and network access) is the next step.
+AppContainer would also remove file and network access, but the renderer
+executable (and its directory) would have to grant read and execute to the
+AppContainer SIDs — changing ACLs on the user's files — and it brings
+capability and profile management. A restricted token gives the same
+denials with no changes outside the process. AppContainer can be layered
+on later.
 
 ## Consequences
 
 - Verified on Windows 11 by an automated test that runs the real binary in
-  its sandbox: low integrity (0x1000), inside a job, writing a file
-  denied, starting a process denied, reading allowed.
-- **Remaining gaps** (also in `docs/security.md`): renderers can still
-  read files the user can read and open network connections (our code does
-  neither; the OS does not stop it); no sandbox on Linux or macOS yet.
-- Reviewing `unsafe` means reading one file
-  (`crates/sandbox/src/windows.rs`).
+  its sandbox: low integrity (0x1000); writing a file, reading a
+  directory, starting a process and connecting to a local TCP port all
+  denied; real pages (fonts, scripts, local subresources) render through
+  the broker of ADR-0005.
+- Linux and macOS code is type-checked and linted for those targets on the
+  development machine; it runs for the first time in CI.
+- **Remaining gaps** (also in `docs/security.md`): the Linux filter is a
+  denylist; the macOS profile allows by default and denies specific
+  operations; no memory limits outside Windows.
+- Reviewing `unsafe` means reading `crates/sandbox/src/{windows,linux,macos}.rs`.

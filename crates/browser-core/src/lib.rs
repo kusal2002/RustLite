@@ -11,13 +11,15 @@ mod handle;
 pub mod images;
 mod interaction;
 pub mod ipc;
+pub mod local;
 pub mod remote;
 mod scripts;
 mod tab;
 
 pub use handle::PageHandle;
 pub use interaction::{InputOutcome, PageKey};
-pub use remote::{RemotePage, Spawned, Spawner, serve};
+pub use local::{DirFiles, LocalFiles, LocalKind};
+pub use remote::{RemotePage, RendererProcess, Spawned, Spawner, serve};
 
 pub use tab::{
     Initiator, NavState, NavigationError, Tab, error_page_html, load_id_space, parse_user_input,
@@ -326,12 +328,27 @@ impl Page {
     }
 
     /// Replaces the page content with `source` parsed as HTML, loading
-    /// `<img>` files relative to `base_dir` (a local document's directory).
+    /// stylesheets, scripts and images relative to `base_dir` (a local
+    /// document's directory).
     pub fn load_html_with_base(
         &mut self,
         url: impl Into<String>,
         source: &str,
         base_dir: Option<&std::path::Path>,
+    ) {
+        match base_dir {
+            Some(dir) => self.load_html_with_files(url, source, Some(&mut local::DirFiles(dir))),
+            None => self.load_html_with_files(url, source, None),
+        }
+    }
+
+    /// Replaces the page content with `source` parsed as HTML; a local
+    /// document's subresources come from `files`.
+    pub fn load_html_with_files(
+        &mut self,
+        url: impl Into<String>,
+        source: &str,
+        mut files: Option<&mut dyn LocalFiles>,
     ) {
         let url = url.into();
         let start = std::time::Instant::now();
@@ -345,16 +362,16 @@ impl Page {
             "HTML document parsed"
         );
         let base_url = base_url_for(&out.document, Url::parse(&url).ok());
-        let external_sheets = match base_dir {
-            Some(dir) => load_local_stylesheets(&out.document, dir),
+        let external_sheets = match files.as_deref_mut() {
+            Some(files) => load_local_stylesheets(&out.document, files),
             None => HashMap::new(),
         };
         let stylist =
             rustlite_style::stylist_with_external(&out.document, |n| external_sheets.get(&n));
-        let images = match base_dir {
-            Some(dir) => {
+        let images = match files.as_deref_mut() {
+            Some(files) => {
                 let start = std::time::Instant::now();
-                let images = images::load_images(&out.document, dir);
+                let images = images::load_images(&out.document, files);
                 tracing::info!(
                     count = images.len(),
                     image_ms = start.elapsed().as_secs_f64() * 1000.0,
@@ -365,7 +382,7 @@ impl Page {
             None => Images::new(),
         };
         let scripts = if self.javascript {
-            scripts::Scripts::collect(&out.document, base_dir)
+            scripts::Scripts::collect(&out.document, files)
         } else {
             scripts::Scripts::default()
         };
@@ -855,13 +872,11 @@ fn base_url_for(dom: &Document, document_url: Option<Url>) -> Option<Url> {
     }
 }
 
-/// Reads `<link rel=stylesheet>` files for a local document, under the same
-/// directory policy as images.
+/// Reads `<link rel=stylesheet>` files for a local document.
 fn load_local_stylesheets(
     dom: &Document,
-    base_dir: &std::path::Path,
+    files: &mut dyn LocalFiles,
 ) -> HashMap<NodeId, Stylesheet> {
-    const MAX_CSS_BYTES: u64 = 4 * 1024 * 1024;
     let mut sheets = HashMap::new();
     for n in dom.descendants(dom.root()) {
         if !rustlite_style::is_stylesheet_link(dom, n) {
@@ -870,11 +885,7 @@ fn load_local_stylesheets(
         let Some(href) = dom.attribute(n, "href") else {
             continue;
         };
-        let loaded = images::resolve_local(base_dir, href).ok().and_then(|path| {
-            let size = std::fs::metadata(&path).ok()?.len();
-            (size <= MAX_CSS_BYTES).then(|| std::fs::read(&path).ok())?
-        });
-        match loaded {
+        match files.read(LocalKind::Stylesheet, href) {
             Some(bytes) => {
                 let css = rustlite_net::decode_text(&bytes, None).text;
                 sheets.insert(n, rustlite_css::parse_stylesheet(&css));

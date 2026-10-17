@@ -58,7 +58,8 @@ url = "2.5.8"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 winit = "0.30"
 # Raw Win32 bindings for the renderer sandbox only (already in the tree via winit).
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+libc = "0.2.190"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

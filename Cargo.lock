@@ -2277,6 +2277,7 @@ dependencies = [
 name = "rustlite-sandbox"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "tracing",
  "windows-sys 0.61.2",
 ]

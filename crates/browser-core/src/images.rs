@@ -21,6 +21,8 @@ use rustlite_dom::Document;
 use rustlite_layout::Images;
 use rustlite_paint::ImageData;
 
+use crate::local::{LocalFiles, LocalKind};
+
 pub const MAX_IMAGE_FILE_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_IMAGE_DIMENSION: u32 = 8192;
 
@@ -87,10 +89,32 @@ pub fn decode_bytes(bytes: &[u8]) -> Result<ImageData, ImageError> {
     ImageData::new(w, h, rgba.into_raw()).ok_or_else(|| ImageError::Decode("empty image".into()))
 }
 
-/// Loads every `<img src>` in `dom` relative to `base_dir`. The same file is
-/// decoded once and shared between elements.
-pub fn load_images(dom: &Document, base_dir: &Path) -> Images {
-    let mut by_path: HashMap<PathBuf, Option<Rc<ImageData>>> = HashMap::new();
+/// `src` without query, fragment, `.` segments and folded `..` segments, so
+/// references to the same file share one decoded image.
+fn reference_key(src: &str) -> String {
+    let path = src.trim().split(['#', '?']).next().unwrap_or("");
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split(['/', '\\']) {
+        match part {
+            "" | "." => {}
+            ".." => {
+                if parts.last().is_some_and(|p| *p != "..") {
+                    parts.pop();
+                } else {
+                    parts.push("..");
+                }
+            }
+            p => parts.push(p),
+        }
+    }
+    parts.join("/")
+}
+
+/// Loads every `<img src>` in `dom` from `files` (a local document's
+/// directory). The same `src` is read and decoded once and shared between
+/// elements.
+pub fn load_images(dom: &Document, files: &mut dyn LocalFiles) -> Images {
+    let mut by_src: HashMap<String, Option<Rc<ImageData>>> = HashMap::new();
     let mut images = Images::new();
     for node in dom.descendants(dom.root()) {
         if !dom.is_element_named(node, "img") {
@@ -99,25 +123,22 @@ pub fn load_images(dom: &Document, base_dir: &Path) -> Images {
         let Some(src) = dom.attribute(node, "src") else {
             continue;
         };
-        let loaded = match resolve_local(base_dir, src) {
-            Ok(path) => by_path
-                .entry(path.clone())
-                .or_insert_with(|| match decode_file(&path) {
+        let loaded = by_src
+            .entry(reference_key(src))
+            .or_insert_with(|| {
+                let bytes = files.read(LocalKind::Image, src)?;
+                match decode_bytes(&bytes) {
                     Ok(img) => {
-                        tracing::debug!(path = %path.display(), w = img.width, h = img.height, "image decoded");
+                        tracing::debug!(src, w = img.width, h = img.height, "image decoded");
                         Some(Rc::new(img))
                     }
                     Err(e) => {
-                        tracing::warn!(path = %path.display(), error = ?e, "image not loaded");
+                        tracing::warn!(src, error = ?e, "image not loaded");
                         None
                     }
-                })
-                .clone(),
-            Err(e) => {
-                tracing::warn!(src, error = ?e, "image not loaded");
-                None
-            }
-        };
+                }
+            })
+            .clone();
         if let Some(img) = loaded {
             images.insert(node, img);
         }
@@ -203,7 +224,7 @@ mod tests {
         let out = rustlite_html::parse_document(
             "<img src=a.png><img src='./a.png'><img src=nope.png><img>",
         );
-        let images = load_images(&out.document, &dir);
+        let images = load_images(&out.document, &mut crate::local::DirFiles(&dir));
         assert_eq!(images.len(), 2);
         let all: Vec<_> = images.values().collect();
         assert!(Rc::ptr_eq(all[0], all[1]));

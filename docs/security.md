@@ -1,10 +1,11 @@
 # Security
 
 **RustLite loads untrusted content from the network and runs its
-JavaScript. Pages run in separate renderer processes; on Windows those are
-sandboxed, on Linux and macOS they are not yet. It is a prototype: do not
-rely on it for browsing untrusted sites with sensitive data on the
-machine.** `--disable-javascript` turns scripting off. Design:
+JavaScript. Pages run in separate, sandboxed renderer processes that can
+open no files, make no network connections and start no processes (verified
+on Windows; the Linux and macOS sandboxes are implemented but have not yet
+run in CI). It is a prototype: do not rely on it for browsing untrusted
+sites with sensitive data on the machine.** `--disable-javascript` turns scripting off. Design:
 [ADR-0005](../research/decisions/ADR-0005-process-isolation.md) (process
 split) and [ADR-0006](../research/decisions/ADR-0006-sandbox-crate-scoped-unsafe.md)
 (sandbox).
@@ -18,8 +19,16 @@ split) and [ADR-0006](../research/decisions/ADR-0006-sandbox-crate-scoped-unsafe
   stack, HTTP cache and clipboard.
 - IPC is stdin/stdout with length-prefixed frames (≤64 MiB). The browser
   decodes every renderer message as hostile: bounds-checked lengths, finite
-  floats, display-list fonts accepted only as faces the browser already
-  indexed, image sizes capped at 16384 px a side.
+  floats, display-list fonts accepted only as positions in the face list
+  the browser sent, image sizes capped at 16384 px a side.
+- **Brokered resources:** renderers open no files. The browser sends its
+  list of installed font faces at start; while handling a request a
+  renderer may ask (an *upcall*) for a face's data, a fallback face for a
+  character, or a local document's stylesheet, script or image by its
+  reference text. The browser answers only for faces it listed and only
+  for files inside the current local document's directory (the renderer
+  never learns the path); malformed upcalls kill the renderer. Network
+  loads were already done by the browser.
 - **Watchdog:** a renderer that does not reply within 10 s, exits or sends
   a malformed frame is killed; the tab shows a local "Page not available"
   page and the next navigation gets a new renderer. This is also the total
@@ -27,33 +36,63 @@ split) and [ADR-0006](../research/decisions/ADR-0006-sandbox-crate-scoped-unsafe
 - `--single-process` puts pages back in the browser process (debugging
   only; no isolation).
 
-## OS sandbox (SANDBOX-001)
+## OS sandbox (SANDBOX-001, SANDBOX-002)
 
-Windows (verified by `apps/desktop/tests/renderer.rs`, which runs the real
-binary in its sandbox):
+`apps/desktop/tests/renderer.rs` runs the real binary in its sandbox and
+checks, after lockdown, that writing a file, reading a directory, starting
+a process and connecting to a local TCP listener all fail.
 
-- **Job object per renderer:** 1 GiB committed-memory cap, no child
-  processes (`ActiveProcessLimit = 1`), killed when the browser exits or
-  crashes, immediate exit on unhandled exceptions, no clipboard, desktop
-  switching, global atoms, other processes' window handles, system
-  parameters or display settings.
-- **Renderer lockdown** before it reads any input: low integrity level
-  (cannot write the user's files, registry or medium-integrity processes),
-  all privileges disabled, no dynamic code, no DLLs from remote or
-  low-integrity locations.
-- The `unsafe` needed for these Win32 calls lives only in
-  `crates/sandbox/src/windows.rs`, one documented call per block; all other
-  crates forbid `unsafe` (ADR-0006).
+**Windows** (verified locally, Windows 11):
+
+- **Restricted primary token:** the browser creates each renderer
+  suspended (`CreateProcessAsUserW`) with a token whose user and groups are
+  all deny-only, whose only restricting SID is the NULL SID, with every
+  privilege removed and low integrity. Access checks against files, the
+  registry, devices or other processes grant nothing; Winsock cannot even
+  start. A same-access warm-up impersonation token lets the loader map the
+  executable and DLLs; the renderer drops it (`RevertToSelf`) before
+  reading any input. Only its stdin, stdout and stderr handles are
+  inherited (explicit handle list).
+- **Job object per renderer** (assigned before the renderer runs): 1 GiB
+  committed-memory cap, no child processes (`ActiveProcessLimit = 1`),
+  killed when the browser exits or crashes, immediate exit on unhandled
+  exceptions, no clipboard, desktop switching, global atoms, other
+  processes' window handles, system parameters or display settings.
+- **Mitigations:** no dynamic code; no DLLs from remote or low-integrity
+  locations.
+
+**Linux** (implemented; type-checked and linted for the target, not yet run
+in CI): `no_new_privs`; a Landlock ruleset that handles every filesystem
+right (and TCP bind/connect on ABI 4+) and grants none; a seccomp-bpf filter
+(all threads) that kills the process for a foreign architecture and returns
+`EPERM` for `socket`, `execve`/`execveat`, `ptrace`,
+`process_vm_readv`/`writev`, mount and namespace calls, BPF,
+`perf_event_open`, `userfaultfd`, keyring, module and kexec calls,
+`io_uring`, handle-based opens, reboot, swap and `acct` (and every x32 call
+on x86_64).
+
+**macOS** (implemented; type-checked and linted, not yet run in CI): a
+`sandbox_init` profile that denies all network operations, `exec` and
+`fork`, and reading or writing any path except system library locations
+(`/System`, `/usr/lib`, `/usr/share`, dyld and time-zone data,
+`/dev/null`, `/dev/urandom`).
+
+The `unsafe` code for these calls lives only in `crates/sandbox`
+(`windows.rs`, `linux.rs`, `macos.rs`), one documented call per block; all
+other crates forbid `unsafe` (ADR-0006).
 
 **Gaps:**
 
-- Renderers can still **read** files the user can read and could open
-  **network** connections; RustLite's renderer code does neither for web
-  pages, but the OS does not prevent it. Local `file:` documents read their
-  own directory's subresources from the renderer. AppContainer (which
-  removes both) is the next step.
-- **Linux and macOS:** renderer processes, watchdog and memory isolation
-  by process, but no OS sandbox yet (seccomp + namespaces, `sandbox_init`).
+- **Linux:** a denylist filter, not an allowlist: the remaining system
+  calls are reachable kernel attack surface; `fork`/`clone` are allowed
+  (a renderer can copy itself but not run another program); no memory
+  limit; Landlock needs kernel 5.13+ with Landlock enabled, otherwise the
+  renderer logs an incomplete sandbox and file access stays open.
+- **macOS:** `(allow default)` with targeted denials: Mach services and
+  IPC stay reachable; no memory limit.
+- **Windows:** no AppContainer; the renderer can still use objects that
+  grant access to everyone by null DACL, and window messages within its
+  desktop are limited only by the job's UI restrictions.
 - No per-renderer heap limit inside Boa: the 1 GiB job cap ends the
   renderer instead (Windows only).
 
@@ -138,8 +177,8 @@ and the CSS parser alone are not yet fuzzed separately.
 
 ## Not yet done (required before RustLite is suitable for general browsing)
 
-1. OS sandboxes on Linux and macOS; AppContainer on Windows (no file
-   reads or network for renderers).
+1. Running the Linux and macOS sandboxes in CI, then narrowing them
+   (seccomp allowlist, deny-default macOS profile, memory limits).
 2. A graceful script timeout (today a hung script costs the whole
    renderer, after 10 s) and a heap limit outside Windows.
 3. CORS and CSP. Same-origin rules matter once scripts can fetch or read
@@ -147,4 +186,6 @@ and the CSS parser alone are not yet fuzzed separately.
    stylesheets and scripts load as they do in browsers.
 4. Coverage-guided fuzzing (cargo-fuzz on nightly) and decoder fuzzing.
 5. Download handling and safe file saving (downloads are refused today).
-6. Dependency auditing in CI (`cargo audit` / `cargo deny`).
+6. ~~Dependency auditing in CI~~: `cargo deny` checks advisories,
+   licenses, bans and sources in the `audit` CI job (`deny.toml`); its
+   first run is pending.

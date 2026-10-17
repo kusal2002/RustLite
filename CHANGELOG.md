@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Added — 2026-10-17 (sandbox hardening)
+- Renderers open no files: the browser sends its font face list and
+  answers upcalls for font data, fallback faces and a local document's
+  stylesheets, scripts and images (`FontBroker`, `LocalFiles`).
+- Windows renderers start suspended with a restricted lockdown token and a
+  warm-up impersonation token they drop before reading input; the job is
+  assigned before they run; only their stdio handles are inherited. File
+  reads and network connections are now denied too.
+- Linux (no_new_privs, Landlock, seccomp-bpf) and macOS (`sandbox_init`)
+  renderer sandboxes (`libc`; ADR-0006).
+- `cargo deny` CI job and `deny.toml`.
+
+### Changed — 2026-10-17
+- `rustlite_sandbox::launch` replaces `RendererJob`; `Spawned` holds a
+  `RendererProcess` and pipe ends instead of a `std::process::Child`.
+- `serve` takes owned streams; `Page::load_html_with_files`.
+- The self-test (`--renderer-selftest <dir> [port]`) also probes reads and
+  network connections.
+
 ### Added — 2026-10-17 (Phase 10, parts 2 and 3)
 - Layout: `position: relative/absolute/fixed` with `z-index` paint order,
   floats and `clear`, `inline-block`/`inline-flex`, min/max-content and

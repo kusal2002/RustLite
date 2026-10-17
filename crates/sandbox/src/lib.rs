@@ -1,122 +1,166 @@
 //! OS sandboxing for renderer processes (ADR-0005, ADR-0006).
 //!
-//! On Windows:
-//! - The browser puts every renderer in a [`RendererJob`]: a job object
-//!   that caps each renderer's committed memory, allows no child
-//!   processes, blocks clipboard/desktop/global-atom/system-setting access,
-//!   kills renderers when the browser exits (or crashes), and turns
-//!   unhandled exceptions into immediate exits.
-//! - Each renderer calls [`lockdown`] before reading anything from the
-//!   browser: it lowers its own token to low integrity (it can no longer
-//!   write to the user's files, registry or medium-integrity processes),
-//!   disables all privileges, and turns on the dynamic-code and image-load
-//!   mitigations (no executable memory, no DLLs from remote or
-//!   low-integrity locations).
+//! The browser starts renderers with [`launch`]; each renderer calls
+//! [`lockdown`] before it reads any input. Together they confine a renderer
+//! to computing on what the browser sends it: no files, no network, no new
+//! processes. (Renderers get fonts and local files from the browser over
+//! IPC, so they need none of these.)
 //!
-//! Elsewhere these are no-ops that report "not sandboxed" (Linux seccomp and
-//! namespaces and the macOS sandbox are follow-ups).
+//! - **Windows:** the renderer is created suspended with a restricted
+//!   primary token (all groups deny-only, the NULL SID as the only
+//!   restricting SID, low integrity, no privileges), assigned to its own job
+//!   object (memory cap, no child processes, UI restrictions, killed with
+//!   the browser), and resumed under a same-access warm-up impersonation
+//!   token so the loader can map DLLs. [`lockdown`] turns on the
+//!   dynamic-code and image-load mitigations and drops the warm-up token
+//!   (`RevertToSelf`); from then on only the restricted token applies.
+//! - **Linux:** [`lockdown`] sets `no_new_privs`, applies a Landlock ruleset
+//!   that handles every filesystem (and, where supported, TCP) access right
+//!   with no rules — so none is granted — and installs a seccomp-bpf filter
+//!   that refuses socket creation, `exec`, `ptrace` and other
+//!   kernel-surface system calls.
+//! - **macOS:** [`lockdown`] enters a `sandbox_init` profile that denies
+//!   reading and writing files outside system library paths, all network
+//!   access, and process creation.
 //!
 //! This is the only crate where `unsafe` is allowed; every block calls one
-//! Win32 function with arguments checked as described in its SAFETY note.
+//! OS function with arguments checked as described in its SAFETY note.
 
-use std::io;
-use std::process::Child;
+use std::ffi::OsStr;
+use std::io::{self, Read, Write};
+use std::path::Path;
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
 
-/// What [`lockdown`] achieved (each step is attempted independently).
+/// What [`lockdown`] achieved. Each part is attempted independently and
+/// reported, so a partial sandbox is visible in the logs and tests.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Lockdown {
-    pub low_integrity: bool,
-    pub privileges_removed: bool,
-    pub dynamic_code_blocked: bool,
-    pub image_load_restricted: bool,
+    /// Opening files is denied (restricted token, Landlock, or the macOS
+    /// profile).
+    pub filesystem: bool,
+    /// Creating network connections is denied.
+    pub network: bool,
+    /// Starting processes is denied (job limit, seccomp, or the profile).
+    pub processes: bool,
+    /// Privileges are gone and cannot come back (no privileges and low
+    /// integrity on Windows; `no_new_privs` on Linux; sandboxed processes
+    /// cannot leave the sandbox on macOS).
+    pub privileges: bool,
+    /// Integrity level RID on Windows (0x1000 low), read before the
+    /// warm-up token is dropped.
+    pub integrity: Option<u32>,
 }
 
 impl Lockdown {
     pub fn complete(&self) -> bool {
-        self.low_integrity
-            && self.privileges_removed
-            && self.dynamic_code_blocked
-            && self.image_load_restricted
+        self.filesystem && self.network && self.processes && self.privileges
     }
 }
 
-/// Default per-renderer commit limit.
+/// Default per-renderer memory limit (Windows job commit limit).
 pub const DEFAULT_RENDERER_MEMORY: usize = 1024 * 1024 * 1024;
 
-/// The job object one renderer runs in (see the module docs). Dropping it
-/// kills the renderer, so keep it as long as the renderer should live.
+/// Is OS sandboxing implemented on this platform?
+pub const SUPPORTED: bool = cfg!(any(windows, target_os = "linux", target_os = "macos"));
+
+/// A running renderer process. Dropping it kills the process.
 #[derive(Debug)]
-pub struct RendererJob {
+pub struct Process {
     #[cfg(windows)]
-    inner: windows::Job,
+    inner: windows::Process,
+    #[cfg(not(windows))]
+    inner: std::process::Child,
 }
 
-impl RendererJob {
-    /// Creates the job with a per-process memory limit of `memory_limit`
-    /// bytes. On platforms without job objects this succeeds and does nothing.
-    pub fn new(memory_limit: usize) -> io::Result<Self> {
-        #[cfg(not(windows))]
+impl Process {
+    pub fn id(&self) -> u32 {
+        self.inner.id()
+    }
+
+    pub fn kill(&mut self) -> io::Result<()> {
+        self.inner.kill()
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        let _ = self.inner.kill();
+        let _ = self.inner.wait();
+    }
+}
+
+/// A launched renderer: its process and the pipe ends connected to its
+/// stdin and stdout. Its stderr is the browser's.
+pub struct Launched {
+    pub process: Process,
+    pub stdin: Box<dyn Write + Send>,
+    pub stdout: Box<dyn Read + Send>,
+}
+
+impl std::fmt::Debug for Launched {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Launched")
+            .field("process", &self.process)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Starts `exe args…` as a sandboxed renderer (see the module docs) with
+/// `memory_limit` bytes of memory where the platform can enforce it.
+pub fn launch(exe: &Path, args: &[&OsStr], memory_limit: usize) -> io::Result<Launched> {
+    #[cfg(windows)]
+    {
+        windows::launch(exe, args, memory_limit)
+    }
+    #[cfg(not(windows))]
+    {
+        use std::process::{Command, Stdio};
         let _ = memory_limit;
-        Ok(Self {
-            #[cfg(windows)]
-            inner: windows::Job::new(memory_limit)?,
+        let mut child = Command::new(exe)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| io::Error::other("no stdin"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| io::Error::other("no stdout"))?;
+        Ok(Launched {
+            process: Process { inner: child },
+            stdin: Box::new(stdin),
+            stdout: Box::new(stdout),
         })
     }
-
-    /// Puts a freshly spawned renderer in the job (before it receives input).
-    pub fn assign(&self, child: &Child) -> io::Result<()> {
-        #[cfg(windows)]
-        {
-            self.inner.assign(child)
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = child;
-            Ok(())
-        }
-    }
 }
 
-/// Locks down the current (renderer) process. Call before handling any
-/// untrusted input.
+/// Locks down the current (renderer) process. Call once, after startup and
+/// before handling any untrusted input; nothing may open files afterwards.
 pub fn lockdown() -> Lockdown {
     #[cfg(windows)]
     {
         windows::lockdown()
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        linux::lockdown()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos::lockdown()
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         Lockdown::default()
     }
 }
-
-/// The current process's integrity level RID (0x1000 low, 0x2000 medium,
-/// 0x3000 high), if the platform has one.
-pub fn integrity_level() -> Option<u32> {
-    #[cfg(windows)]
-    {
-        windows::integrity_level()
-    }
-    #[cfg(not(windows))]
-    {
-        None
-    }
-}
-
-/// Whether the current process runs inside a job object (`None` if unknown).
-pub fn in_job() -> Option<bool> {
-    #[cfg(windows)]
-    {
-        windows::in_job()
-    }
-    #[cfg(not(windows))]
-    {
-        None
-    }
-}
-
-/// Is OS sandboxing implemented on this platform?
-pub const SUPPORTED: bool = cfg!(windows);

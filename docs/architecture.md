@@ -46,7 +46,7 @@ is still to be built (see [roadmap](roadmap.md)).
 | `crates/layout` | `rustlite-layout` | Box tree, block/inline layout, line breaking, paint, hit testing | Implemented (normal flow) |
 | `benchmarks` | `rustlite-bench` | Pipeline benchmark harness (binary + library) | Implemented ([performance.md](performance.md)) |
 | `crates/net` | `rustlite-net` | HTTP(S) fetch with limits, redirects, charset decoding, background loader | Implemented ([networking.md](networking.md)) |
-| `crates/sandbox` | `rustlite-sandbox` | Renderer job objects and token lockdown (Windows); no-op elsewhere. The only crate allowed `unsafe` | Implemented on Windows ([ADR-0006](../research/decisions/ADR-0006-sandbox-crate-scoped-unsafe.md)) |
+| `crates/sandbox` | `rustlite-sandbox` | Launching renderers sandboxed and their self-lockdown: restricted token + job (Windows), Landlock + seccomp (Linux), `sandbox_init` (macOS). The only crate allowed `unsafe` | Implemented; verified on Windows ([ADR-0006](../research/decisions/ADR-0006-sandbox-crate-scoped-unsafe.md)) |
 
 Planned crates are created when their first real code lands, not as empty
 shells: `platform`,
@@ -62,7 +62,7 @@ desktop ──► browser-core ──► net
    │              ├──────────► layout ─► style, fonts, paint, dom
    │              └──────────► fonts ──► paint
    ├──► renderer ─────────────► paint
-   ├──► sandbox (Windows: windows-sys)
+   ├──► sandbox (windows-sys / libc)
    └──► diagnostics
 ```
 
@@ -85,7 +85,9 @@ windows.
 - **Renderer processes.** `PageHandle` is a local `Page` or a
   `RemotePage` that drives `rustlite --renderer` over framed stdin/stdout
   IPC (`browser-core::ipc`, `remote`); one process per tab per site,
-  watchdog, sandbox on Windows ([ADR-0005](../research/decisions/ADR-0005-process-isolation.md)).
+  watchdog, OS sandbox. Renderers open no files: fonts and local
+  subresources come from the browser by upcall (`FontBroker`,
+  `LocalFiles`) ([ADR-0005](../research/decisions/ADR-0005-process-isolation.md)).
 - **Layout modules.** `block` (normal flow, floats, clearance, BFCs),
   `inline` (lines, atomic inlines, float avoidance), `intrinsic`
   (min/max-content), `flex`, `positioned` (absolute/fixed), `geometry`
@@ -110,7 +112,8 @@ windows.
 | `self_cell 1.2` | Safe self-referential struct (font bytes + parsed rustybuzz face) | All | Apache-2.0/GPL-2.0 | No dependencies; keeps `unsafe` out of our crates. Same use as cosmic-text |
 | `boa_engine 0.22` (`annex-b` only) | JavaScript engine | All | MIT/Unlicense | +6.1 MiB binary; ~0.29 MB and ~0.8 ms per realm. ADR-0004 |
 | `url 2.5` | WHATWG URL parsing and resolution | All | MIT/Apache-2.0 | |
-| `windows-sys 0.61` (Foundation, Security, JobObjects, Threading) | Win32 job objects, token integrity, process mitigations for the sandbox | Windows only | MIT/Apache-2.0 | Raw bindings, no runtime; used only by `rustlite-sandbox`. ADR-0006 |
+| `windows-sys 0.61` (Foundation, Security, Console, JobObjects, Pipes, Threading) | Restricted-token process creation, job objects, mitigations for the sandbox | Windows only | MIT/Apache-2.0 | Raw bindings, no runtime; used only by `rustlite-sandbox`. ADR-0006 |
+| `libc 0.2` | Landlock, seccomp-bpf (Linux) and `sandbox_init` (macOS) for the sandbox | Unix only | MIT/Apache-2.0 | Raw bindings; already in the tree via other crates; used only by `rustlite-sandbox`. ADR-0006 |
 | `encoding_rs 0.8` | WHATWG Encoding Standard decoders | All | MIT/Apache-2.0 + WHATWG BSD-3 data | Encoding tables add ~1 MiB of binary |
 
 Deferred until needed: `wgpu` (GPU backend),

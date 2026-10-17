@@ -6,7 +6,8 @@ use rustlite_desktop::options::{Options, USAGE};
 fn main() -> ExitCode {
     if std::env::args().nth(1).as_deref() == Some(rustlite_desktop::renderer::SELFTEST_SWITCH) {
         let dir = std::env::args().nth(2).unwrap_or_else(|| ".".into());
-        rustlite_desktop::renderer::selftest(std::path::Path::new(&dir));
+        let port = std::env::args().nth(3).and_then(|p| p.parse().ok());
+        rustlite_desktop::renderer::selftest(std::path::Path::new(&dir), port);
         return ExitCode::SUCCESS;
     }
     if std::env::args().nth(1).as_deref() == Some(rustlite_desktop::renderer::RENDERER_SWITCH) {
